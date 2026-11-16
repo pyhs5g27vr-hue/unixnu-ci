@@ -188,6 +188,15 @@ jobs:
           ls -l "$D" | tail -5
           exit 0
 
+      - name: fuxi data protection answers class 4 (wallpaper store, 2026-11-16)
+        run: |
+          # The iPadOS wallpaper fix (t50-auto-storefix2 + PROT_READ, 2026-11-06) as an xnu source patch: Data has no data protection, so
+          # PosterBoard's NSFileProtectionNone check failed and its data store was never created. fuxi-dataprot=0 turns it off.
+          D=UniXNU/patches/xnu-10063-arm64e
+          mkdir -p "$D"
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-dataprot-none.patch" "$D/"
+          grep -c fuxi_dataprot_none "$D/fuxi-dataprot-none.patch"
+
       - name: fixture additions (pairings the boot (2) kernel had)
         working-directory: UniXNU
         run: |

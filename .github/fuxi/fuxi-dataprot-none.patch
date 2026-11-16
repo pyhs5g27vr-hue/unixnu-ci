@@ -1,0 +1,79 @@
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -73,6 +73,22 @@
+  */
+ 
+ #include <sys/param.h>
++#include <pexpert/pexpert.h>
++
++/* fuxi 2026-11-16 (fuxi-dataprot-none.patch): Data has no data protection; answer class 4 ("none") instead of nothing. fuxi-dataprot=0 turns it off. */
++static int
++fuxi_dataprot_none(void)
++{
++	static int value = -1;
++	if (value < 0) {
++		int arg = 1;
++		if (!PE_parse_boot_argn("fuxi-dataprot", &arg, sizeof(arg))) {
++			arg = 1;
++		}
++		value = arg ? 1 : 0;
++	}
++	return value;
++}
+ #include <sys/systm.h>
+ #include <sys/filedesc.h>
+ #include <sys/kernel.h>
+@@ -4317,6 +4333,8 @@
+ 		if (!error) {
+ 			if (VATTR_IS_SUPPORTED(&va, va_dataprotect_class)) {
+ 				*retval = va.va_dataprotect_class;
++			} else if (fuxi_dataprot_none()) {
++				*retval = 4;    /* PROTECTION_CLASS_D */
+ 			} else {
+ 				error = ENOTSUP;
+ 			}
+@@ -4357,6 +4375,9 @@
+ 		VATTR_SET(&va, va_dataprotect_class, tmp);
+ 
+ 		error = VNOP_SETATTR(vp, &va, ctx);
++		if (error && fuxi_dataprot_none()) {
++			error = 0;      /* fuxi: the volume stores no class; NSFileProtectionNone must still succeed */
++		}
+ 
+ 		vnode_put(vp);
+ 		break;
+--- a/bsd/vfs/vfs_attrlist.c
++++ b/bsd/vfs/vfs_attrlist.c
+@@ -33,6 +33,22 @@
+  */
+ 
+ #include <sys/param.h>
++#include <pexpert/pexpert.h>
++
++/* fuxi 2026-11-16 (fuxi-dataprot-none.patch): Data has no data protection; answer class 4 ("none") instead of nothing. fuxi-dataprot=0 turns it off. */
++static int
++fuxi_dataprot_none(void)
++{
++	static int value = -1;
++	if (value < 0) {
++		int arg = 1;
++		if (!PE_parse_boot_argn("fuxi-dataprot", &arg, sizeof(arg))) {
++			arg = 1;
++		}
++		value = arg ? 1 : 0;
++	}
++	return value;
++}
+ #include <sys/systm.h>
+ #include <sys/namei.h>
+ #include <sys/kernel.h>
+@@ -2040,6 +2056,9 @@
+ 		if (VATTR_IS_SUPPORTED(vap, va_dataprotect_class)) {
+ 			ATTR_PACK4((*abp), vap->va_dataprotect_class);
+ 			abp->actual.commonattr |= ATTR_CMN_DATA_PROTECT_FLAGS;
++		} else if (fuxi_dataprot_none()) {
++			ATTR_PACK4((*abp), 4);  /* fuxi: PROTECTION_CLASS_D */
++			abp->actual.commonattr |= ATTR_CMN_DATA_PROTECT_FLAGS;
+ 		} else if (!return_valid || pack_invalid) {
+ 			ATTR_PACK4((*abp), 0);
+ 		}
