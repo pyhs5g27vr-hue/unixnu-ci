@@ -50,7 +50,24 @@ for p in (real_files('build-ios17-legacy-display.py') if HAVE_ADSP else []):
     s = Path(p).read_text()
     if 'ShengBattery' in s:
         print('build already patched', p); m += 1; continue
-    a1 = "ROOT / 'kits/sheng/AudioProbe.cpp', ROOT / 'kits/sheng/ShengAudioService.cpp'):"
+    # The 53f1320c base with adsp-port.py's block (no audio): add the battery to that block.
+    b1 = "for src in (ROOT / 'kits/sheng/AdspProbe.cpp', ROOT / 'kits/sheng/FuxiAdspFirmware.cpp'):\n"
+    b2 = "                   cwd=record['directory'], check=True)\n    adsp_objs.append(obj)\n"
+    b3 = "'QcomQrtr.c', 'ShengQrtr.c', 'FatVolume.c'):"
+    if 'AudioProbe.cpp' not in s and s.count(b1) == 1 and s.count(b2) == 1 and s.count(b3) == 1:
+        s = s.replace(b1, "for src in (ROOT / 'kits/sheng/AdspProbe.cpp', ROOT / 'kits/sheng/FuxiAdspFirmware.cpp',\n"
+                          "            # the battery (fuxi 2026-11-16, upstream matejkoo217/UniXNU-fuxi)\n"
+                          "            ROOT / 'kits/sheng/BatteryProbe.cpp', ROOT / 'kits/sheng/ShengBattery.cpp'):\n", 1)
+        s = s.replace(b2, "                   cwd=record['directory'], check=True)\n"
+                          "    if src.stem == 'ShengBattery':\n"
+                          "        # its metaclass registers late (BatteryProbe.cpp calls __GLOBAL__sub_I_ShengBattery.cpp)\n"
+                          "        late_obj = OUT / 'ShengBattery.late.o'\n"
+                          "        run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_ShengBattery.cpp', obj, late_obj])\n"
+                          "        obj = late_obj\n"
+                          "    adsp_objs.append(obj)\n", 1)
+        s = s.replace(b3, "'QcomQrtr.c', 'ShengQrtr.c', 'FatVolume.c', 'ShengBattmgr.c'):", 1)
+        Path(p).write_text(s); print('build patched (53f adsp block)', p); m += 1; continue
+    a1 ="ROOT / 'kits/sheng/AudioProbe.cpp', ROOT / 'kits/sheng/ShengAudioService.cpp'):"
     a2 = "    if src.stem == 'ShengAudioService':\n"
     a3 = "            'ShengGpr.c', 'ShengAudioReach.c', 'FuxiCs35l41.c', 'FuxiAudioRt.c'):"
     a4 = "        late_obj = OUT / 'ShengAudioService.late.o'\n        run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_ShengAudioService.cpp', obj, late_obj])\n"
