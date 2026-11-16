@@ -16,19 +16,24 @@ FILES = {'ShengBattmgr.c': 'b1d2868033bc357b89f6d252c218ddfb42e1f576d812d5efc3ef
          'BatteryProbe.cpp': '78b424629824d3cb0260c27cac588711fbaa8f298bad1886407ad4ee9a5ea47d'}
 dirs = [Path(d) for d in sys.argv[1:]]
 pkg = dirs[0] / 'package'
-for name, want in FILES.items():
+
+def real_files(name):
+    out = subprocess.run(['find', *map(str, dirs), '-name', name, '-type', 'f'], capture_output=True, text=True, check=True).stdout.split()
+    return sorted(set(out))
+
+# The battery needs the ADSP stack (AdspProbe.cpp, GLINK, QRTR), which Kerfand added in 82e4615. The CI's base (53f1320c) has none
+# of it (run 43792318691: no sheng_adsp_probe in the late probe), so on such a tree only the poster grant below is applied.
+HAVE_ADSP = bool(real_files('AdspProbe.cpp')) and any('sheng_adsp_probe();' in Path(p).read_text() for p in real_files('Ios17LegacyDisplayProbe.cpp'))
+print('ADSP stack present:', HAVE_ADSP)
+for name, want in (FILES.items() if HAVE_ADSP else ()):
     url = f'https://raw.githubusercontent.com/matejkoo217/UniXNU-fuxi/{COMMIT}/package/{name}'
     data = urllib.request.urlopen(url, timeout=60).read()
     got = hashlib.sha256(data).hexdigest()
     assert got == want, (name, got)
     (pkg / name).write_bytes(data); print('fetched', name, got[:12])
 
-def real_files(name):
-    out = subprocess.run(['find', *map(str, dirs), '-name', name, '-type', 'f'], capture_output=True, text=True, check=True).stdout.split()
-    return sorted(set(out))
-
 n = 0
-for p in real_files('Ios17LegacyDisplayProbe.cpp'):
+for p in (real_files('Ios17LegacyDisplayProbe.cpp') if HAVE_ADSP else []):
     s = Path(p).read_text()
     if 'sheng_battery_probe' in s:
         print('probe already patched', p); n += 1; continue
@@ -38,10 +43,10 @@ for p in real_files('Ios17LegacyDisplayProbe.cpp'):
     s = s.replace(ext, 'extern "C" void sheng_battery_probe(void);   // the battery power source (BatteryProbe.cpp, fuxi 2026-11-16)\n' + ext, 1)
     s = s.replace(call, call + '\tsheng_battery_probe();\n', 1)
     Path(p).write_text(s); print('probe patched', p); n += 1
-assert n >= 1, 'no Ios17LegacyDisplayProbe.cpp'
+assert n >= 1 or not HAVE_ADSP, 'no Ios17LegacyDisplayProbe.cpp'
 
 m = 0
-for p in real_files('build-ios17-legacy-display.py'):
+for p in (real_files('build-ios17-legacy-display.py') if HAVE_ADSP else []):
     s = Path(p).read_text()
     if 'ShengBattery' in s:
         print('build already patched', p); m += 1; continue
@@ -59,14 +64,14 @@ for p in real_files('build-ios17-legacy-display.py'):
                       "        run(['llvm-objcopy', '--remove-section=__DATA,__mod_init_func', '--globalize-symbol=__GLOBAL__sub_I_' + src.stem + '.cpp', obj, late_obj])\n", 1)
     s = s.replace(a3, "            'ShengGpr.c', 'ShengAudioReach.c', 'FuxiCs35l41.c', 'FuxiAudioRt.c', 'ShengBattmgr.c'):", 1)
     Path(p).write_text(s); print('build patched', p); m += 1
-assert m >= 1, 'no build-ios17-legacy-display.py'
+assert m >= 1 or not HAVE_ADSP, 'no build-ios17-legacy-display.py'
 
 # COM3 row: upstream reads the battery through BootLog.c's [battery] row, which this tree does not have. Kerfand's fuxi-adsp-log thread
 # (AdspProbe.cpp) prints every 250 ms while something changes; add the power source's stage, percent, mV, mA and flags to it.
 # native_battery_stats is defined in BatteryProbe.cpp; weak, so a link without it still works (the row is then skipped).
 la = 'extern "C" {extern volatile int32_t native_qrtr_stats[16]; extern char native_qrtr_text[96];}'
 lb = 'q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11], q[12], native_qrtr_text);\n'
-for p in real_files('AdspProbe.cpp'):
+for p in (real_files('AdspProbe.cpp') if HAVE_ADSP else []):
     s = Path(p).read_text()
     if 'fuxi battery:' in s:
         print('adsp log already patched', p); continue
