@@ -21,6 +21,28 @@ def real_files(name):
     out = subprocess.run(['find', *map(str, dirs), '-name', name, '-type', 'f'], capture_output=True, text=True, check=True).stdout.split()
     return sorted(set(out))
 
+def fixup(name, data):
+    """Two fixes from the fuxi iOS 17 battery record (2026-11-13/14, user's fuxi-ios17-battery-fix.md), not in the pinned upstream files."""
+    s = data.decode()
+    if name == 'ShengBattery.cpp':
+        # 2.2: on this arm64e kernel IOWorkLoop::addEventSource puts a software IOInterruptEventSource on the passive chain
+        # (eventSourcePerformsWork compares two _ptmf2ptf thunks that are always equal), so inboxAction never runs and the battery
+        # stays at stage 2. Mark the inbox kActive before adding it.
+        inc = '#include "ShengBattmgr.h"\n'
+        add = 'loop->addEventSource(inbox) != kIOReturnSuccess'
+        assert s.count(inc) == 1 and s.count(add) == 1, 'ShengBattery.cpp anchors'
+        s = s.replace(inc, inc + '\n// fuxi 2026-11-14: a software IOInterruptEventSource must be on the active chain (see battery-port.py).\n'
+                      'namespace {struct ActiveSource : IOEventSource {static void mark(IOEventSource *source) {static_cast<ActiveSource *>(source)->flags |= kActive;}};}\n', 1)
+        s = s.replace(add, '(ActiveSource::mark(inbox), loop->addEventSource(inbox)) != kIOReturnSuccess', 1)
+    elif name == 'ShengBattmgr.c':
+        # 2.3: the Xiaomi 13 has one cell; 0xa6 reads 0 and 0xa7 repeats gauge 1, so summing both gauges showed about 50%.
+        # Sum only when all four readings are positive, otherwise use the firmware's capacity property.
+        old = 'const int gauges = HAS(BmGauge1Remaining) && HAS(BmGauge1Full) && HAS(BmGauge2Remaining) && HAS(BmGauge2Full);'
+        assert s.count(old) == 1, 'ShengBattmgr.c anchor'
+        s = s.replace(old, old[:-1] + '\n        && V(BmGauge1Remaining) > 0 && V(BmGauge1Full) > 0 && V(BmGauge2Remaining) > 0 && V(BmGauge2Full) > 0;'
+                      '   /* fuxi: one cell */', 1)
+    return s.encode()
+
 # The battery needs the ADSP stack (AdspProbe.cpp, GLINK, QRTR), which Kerfand added in 82e4615. The CI's base (53f1320c) has none
 # of it (run 43792318691: no sheng_adsp_probe in the late probe), so on such a tree only the poster grant below is applied.
 HAVE_ADSP = bool(real_files('AdspProbe.cpp')) and any('sheng_adsp_probe();' in Path(p).read_text() for p in real_files('Ios17LegacyDisplayProbe.cpp'))
@@ -30,7 +52,7 @@ for name, want in (FILES.items() if HAVE_ADSP else ()):
     data = urllib.request.urlopen(url, timeout=60).read()
     got = hashlib.sha256(data).hexdigest()
     assert got == want, (name, got)
-    (pkg / name).write_bytes(data); print('fetched', name, got[:12])
+    (pkg / name).write_bytes(fixup(name, data)); print('fetched', name, got[:12])
 
 n = 0
 for p in (real_files('Ios17LegacyDisplayProbe.cpp') if HAVE_ADSP else []):
