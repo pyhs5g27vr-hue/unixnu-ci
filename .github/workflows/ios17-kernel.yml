@@ -1685,6 +1685,17 @@ jobs:
       # 第 8 项：编 dylib + 给插件加 @loader_path/FuxiStatusBar.dylib + 重签 + 塞进 addon。
       # 脚本里有四组作者硬编码路径，必须先 sed。BASE 指到**含 UniXNU/ 的那一层**（$GITHUB_WORKSPACE），
       # 因为脚本里 TREE = BASE/'UniXNU/out-ios17/fuxi/tree'。
+      - name: fuxi status bar centring (2026-11-16)
+        if: ${{ !cancelled() && inputs.build_addon }}
+        run: |
+          set -e
+          # DynamicSplit follows the system aperture frame when it is wider than the sensor + 20 pt; on fuxi that frame is not the
+          # island and pushed the time 18 pt left. The FuxiStatusBar subclass now passes an empty frame (see sb-avoid-edit.py).
+          files=$( (readlink -f device-ios17/statusbar/FuxiStatusBar.c; find device device-ios17 -name FuxiStatusBar.c -type f) 2>/dev/null | sort -u)
+          echo "$files"
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/sb-avoid-edit.py" $files
+          grep -c fsbNeedsUpdate $(readlink -f device-ios17/statusbar/FuxiStatusBar.c)
+
       - name: Patch the status bar script's hardcoded paths
         if: ${{ !cancelled() && inputs.build_addon }}
         working-directory: UniXNU

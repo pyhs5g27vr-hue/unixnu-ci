@@ -8,6 +8,8 @@
 #include <kern/clock.h>
 #include <machine/machine_routines.h>
 #include "BootResetCore.h"
+// The exported machine_routines.h this file is built against has no ml_io_map (run 43774594661: implicit declaration).
+extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 enum {FuxiWdtBase = 0x17c10000, FuxiWdtRst = 0x04 / 4, FuxiWdtEn = 0x08 / 4, FuxiWdtSts = 0x0c / 4, FuxiWdtBark = 0x10 / 4,
       FuxiWdtBite = 0x14 / 4, FuxiWdtHz = 32768};
 static volatile uint32_t *fuxi_wdt;
