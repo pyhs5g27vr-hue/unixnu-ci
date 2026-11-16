@@ -1511,16 +1511,15 @@ jobs:
           print('  加固完成: %d 字节' % len(t))
           PY
 
-          # 4) 覆盖 kits/sheng（编译时用的是这个路径）
-          mkdir -p "$T/kits/sheng" 2>/dev/null || true
-          cp /tmp/FuxiTouchProbe.82e.cpp "$DST"
-          echo "  写入 $DST ($(wc -c < "$DST") 字节)"
-
-          # 5) 同步 device/package（如果有别的脚本从那里读）
-          if [ -f "$SRC" ]; then
-            cp /tmp/FuxiTouchProbe.82e.cpp "$SRC"
-            echo "  同步 $SRC"
-          fi
+          # 4) kits/sheng in the tree is a symlink made later by `unixnu tree`: patch the source files it links to
+          #    (every FuxiTouchProbe.cpp outside out-ios17), never create the tree path ourselves.
+          rm -rf "$T/kits/sheng" 2>/dev/null || true
+          found=0
+          for f in $(find . ../device ../device-ios17 -name FuxiTouchProbe.cpp -not -path '*/out-ios17/*' 2>/dev/null | sort -u); do
+            cp /tmp/FuxiTouchProbe.82e.cpp "$f"; echo "  wrote $f"; found=1
+          done
+          [ $found = 1 ] || { echo "no FuxiTouchProbe.cpp source found" >&2; exit 1; }
+          DST=$(find . -name FuxiTouchProbe.cpp -not -path '*/out-ios17/*' | head -1)
 
           # 6) 本步验证
           echo "=== 验证 ==="
