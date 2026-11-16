@@ -27,6 +27,23 @@ for name in CXX + C + H:
     assert len(data) > 200, (name, len(data))
     (pkg / name).write_bytes(data); print('fetched', name, len(data))
 
+# FuxiAdspFirmware.cpp reads the firmware from the modem partition through native_ufs_part_find/read, which 82e4615 appended to
+# drivers/NativeUfs/NativeUfs.cpp (80 lines, read-only GPT lookup + READ(10)); 53f's NativeUfs.cpp ends just before them
+# (run 43797509258: undefined _native_ufs_part_find/_native_ufs_part_read). Append the same section.
+ufs_new = urllib.request.urlopen(f'https://raw.githubusercontent.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17/{COMMIT}/device/drivers/NativeUfs/NativeUfs.cpp',
+                                 timeout=60).read().decode()
+mark = '// ---- Read-only access to named partitions (board drivers)'
+assert ufs_new.count(mark) == 1, 'NativeUfs.cpp section'
+section = '\n\n' + ufs_new[ufs_new.index(mark):]
+u = 0
+for p in real_files('NativeUfs.cpp'):
+    s = Path(p).read_text()
+    if 'native_ufs_part_find' in s:
+        print('NativeUfs already has the partition reads', p); u += 1; continue
+    assert 'hostRead4k' in s and 'rootCrc32' in s, ('NativeUfs anchors', p)
+    Path(p).write_text(s.rstrip('\n') + section); print('NativeUfs partition reads appended', p); u += 1
+assert u >= 1, 'no NativeUfs.cpp'
+
 # The late probe: declare and call sheng_adsp_probe() after the touch probe.
 n = 0
 for p in real_files('Ios17LegacyDisplayProbe.cpp'):
