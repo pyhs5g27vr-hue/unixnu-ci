@@ -10,13 +10,8 @@ BLOCK = r'''
 // fuxi 2026-11-16: ignore the aperture frame (see the CI step "fuxi status bar centring").
 typedef bool (*FsbNeedsUpdate)(id, SEL, FsbRect, double *, double *);
 static FsbNeedsUpdate gOrigNeedsUpdate[2];
-static int gAvoidReported[2];
 static bool fsbNeedsUpdate(int k, id self, SEL cmd, FsbRect frame, double *offset, double *width) {
-    if (gAvoidReported[k] < 2 && frame.w > 0) {
-        char what[96];
-        snprintf(what, sizeof what, "avoid%d:%.1f,%.1f,%.1f,%.1f", k, frame.x, frame.y, frame.w, frame.h);
-        ++gAvoidReported[k]; fsbBeacon(what);
-    }
+    (void)frame;
     return gOrigNeedsUpdate[k](self, cmd, (FsbRect){0, 0, 0, 0}, offset, width);
 }
 static bool fsbNeedsUpdateUI(id self, SEL cmd, FsbRect f, double *o, double *w) { return fsbNeedsUpdate(0, self, cmd, f, o, w); }
