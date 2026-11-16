@@ -13,6 +13,8 @@
 #include "BootResetCore.h"
 // The exported machine_routines.h this file is built against has no ml_io_map (run 43774594661: implicit declaration).
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void *parameter, integer_t priority,
+                                                  thread_t *new_thread);
 enum {FuxiGhControl = 0x86000005, FuxiGhStatus = 0x86000006, FuxiGhPing = 0x86000007, FuxiGhSetTime = 0x86000008,
       FuxiGhEnable = 3, FuxiGhDisable = 2};
 static unsigned fuxi_hwdt_test;
@@ -24,7 +26,9 @@ static int32_t fuxi_gh_call(uint32_t fn, uint64_t a1, uint64_t a2) {
   register uint64_t x1 __asm__("x1") = a1;
   register uint64_t x2 __asm__("x2") = a2;
   register uint64_t x3 __asm__("x3") = 0;
-  __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
+  // Clobbers as upstream matejkoo217/UniXNU-fuxi package/BootReset.c smc2(): x4..x17 are not trusted across the call.
+  __asm__ volatile("smc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+                   "x12", "x13", "x14", "x15", "x16", "x17");
   return (int32_t)(uint32_t)x0;
 }
 
@@ -86,7 +90,8 @@ static void fuxi_hwdt_start(void) {
     return;
   }
   thread_t thread;
-  if (kernel_thread_start(fuxi_hwdt_thread, NULL, &thread) != KERN_SUCCESS) {
+  // Highest kernel priority (MAXPRI_KERNEL 95), as upstream: a busy system must not starve the pings into a false bite.
+  if (kernel_thread_start_priority(fuxi_hwdt_thread, NULL, 95, &thread) != KERN_SUCCESS) {
     fuxi_hwdt_state[0] = 0xe5;
     printf("fuxi hwdt: no ping thread, watchdog left off\n");
     return;
