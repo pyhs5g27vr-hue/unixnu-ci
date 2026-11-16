@@ -1449,6 +1449,14 @@ jobs:
           grep -c 'printf("SA' device/patches/xnu/zzy-staged-system-apps.patch
           exit 0
 
+      - name: fuxi battery (upstream ShengBattery, 2026-11-16)
+        if: ${{ inputs.build_kernel }}
+        run: |
+          set -e
+          # The ADSP battery manager as an IOPMPowerSource (UniXNU docs/devices/fuxi.md, Power; needs sheng-adsp=2 at boot).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/battery-port.py" device device-ios17
+          grep -rn 'sheng_battery_probe();' device device-ios17 --include=Ios17LegacyDisplayProbe.cpp
+
       - name: kernel
         if: ${{ inputs.build_kernel }}
         working-directory: UniXNU
