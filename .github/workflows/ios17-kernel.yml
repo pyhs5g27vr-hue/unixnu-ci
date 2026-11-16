@@ -1612,10 +1612,9 @@ jobs:
           # image's swap on the memory side of GMEM transfers": a GMEM pass stored drawn BGRA8 colour with red and blue exchanged; passes
           # the autotune sends to system memory were right, hence the flashing. Applies after turnip-gmem-mutable-swap.patch (in the base).
           GS=patches/mesa/turnip-gmem-memory-side-swap.patch
-          if [ ! -f "$GS" ]; then
-            curl -fsSL "https://raw.githubusercontent.com/UniXNU/UniXNU/93ad2ce4f33dfe13a5c6d976ee0fad45749eb101/$GS" -o "$GS" \
-              && echo "fetched gmem memory-side swap: $(wc -c < "$GS") bytes" || echo "WARN: could not fetch $GS" >&2
-          fi
+          # Upstream's hunks name tu_note_gmem_side(cmd, iview, ...); our base has tu_note_gmem_side(1, ...), so use the adapted copy.
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/turnip-gmem-memory-side-swap-base.patch" "$GS" \
+            && echo "gmem memory-side swap (base): $(wc -c < "$GS") bytes" || echo "WARN: no adapted $GS" >&2
           python3 - scripts/data/adreno-compiler-inputs.json "$GS" <<'PY'
           import json, sys
           from pathlib import Path
