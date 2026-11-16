@@ -1468,6 +1468,67 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/battery-port.py" device device-ios17
           grep -rn 'sheng_battery_probe();' device device-ios17 --include=Ios17LegacyDisplayProbe.cpp || echo 'no battery probe: this base has no ADSP stack'
 
+      - name: Patch FuxiTouchProbe (fuxi_control_touch + keep native_touch_set_sink alive)
+        if: ${{ !cancelled() && inputs.build_kernel }}
+        working-directory: UniXNU
+        run: |
+          set -euo pipefail
+          T=out-ios17/fuxi/tree
+          SRC="$T/device/package/FuxiTouchProbe.cpp"
+          DST="$T/kits/sheng/FuxiTouchProbe.cpp"
+          REF=82e46156e8e0cebd331a8e152954b5ca3ffff7c7
+          WANT=b6df07856b9ef7a12cfaf5a2106e4c25b7d1302cf9ae6f0b7deb17e874dbef9e
+
+          echo "=== 补触摸：从 $REF 拿 FuxiTouchProbe.cpp ==="
+
+          # 1) 拉含 fuxi_control_touch 的版本
+          curl -fsSL \
+            "https://raw.githubusercontent.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17/$REF/device/package/FuxiTouchProbe.cpp" \
+            -o /tmp/FuxiTouchProbe.82e.cpp
+          echo "  拉到 $(wc -c < /tmp/FuxiTouchProbe.82e.cpp) 字节"
+
+          # 2) sha256 校验（确认拉的是那个确切版本）
+          echo "$WANT  /tmp/FuxiTouchProbe.82e.cpp" | shasum -a 256 -c -
+          echo "  sha256 校验通过"
+
+          # 3) 防 gc：native_touch_set_sink 加 used + noinline
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('/tmp/FuxiTouchProbe.82e.cpp')
+          t = p.read_text()
+          old = 'extern "C" void native_touch_set_sink(void (*sink)(void *), void *context) {'
+          new = 'extern "C" __attribute__((used, noinline)) void native_touch_set_sink(void (*sink)(void *), void *context) {'
+          assert old in t, 'native_touch_set_sink 的定义没找到'
+          t = t.replace(old, new, 1)
+          # fuxi_control_touch 里加 volatile 保活（-O2 下 &func 会折叠成常量，volatile 存储不会）
+          fn = 'extern "C" int fuxi_control_touch(unsigned op, unsigned a, unsigned b) {'
+          guard = (fn + '\n'
+                   '    { static void (*volatile sinkKeepAlive)(void (*)(void *), void *) = native_touch_set_sink;\n'
+                   '      (void)sinkKeepAlive; }')
+          assert fn in t, 'fuxi_control_touch 没找到'
+          t = t.replace(fn, guard, 1)
+          p.write_text(t)
+          print('  加固完成: %d 字节' % len(t))
+          PY
+
+          # 4) 覆盖 kits/sheng（编译时用的是这个路径）
+          mkdir -p "$T/kits/sheng" 2>/dev/null || true
+          cp /tmp/FuxiTouchProbe.82e.cpp "$DST"
+          echo "  写入 $DST ($(wc -c < "$DST") 字节)"
+
+          # 5) 同步 device/package（如果有别的脚本从那里读）
+          if [ -f "$SRC" ]; then
+            cp /tmp/FuxiTouchProbe.82e.cpp "$SRC"
+            echo "  同步 $SRC"
+          fi
+
+          # 6) 本步验证
+          echo "=== 验证 ==="
+          for kw in fuxi_control_touch native_touch_set_sink sinkKeepAlive 'used, noinline'; do
+            printf '  %-24s %s\n' "$kw" "$(grep -c "$kw" "$DST" || echo 0)"
+          done
+          # 期望: fuxi_control_touch >= 1, native_touch_set_sink >= 3, sinkKeepAlive >= 2
+
       - name: kernel
         if: ${{ inputs.build_kernel }}
         working-directory: UniXNU
@@ -1570,6 +1631,27 @@ jobs:
               ./unixnu build kernel -D ../device-ios17 -j 4; }
           fi
           find out-ios17 -name kernel.macho -print
+
+      - name: Verify touch symbols in the built kernel
+        if: ${{ !cancelled() && inputs.build_kernel }}
+        working-directory: UniXNU
+        run: |
+          set -uo pipefail
+          K=$(find out-ios17 -path '*/kernel/kernel.macho' | head -1)
+          if [ -z "$K" ]; then echo "no kernel found"; exit 0; fi
+          echo "kernel: $K ($(stat -c %s "$K" 2>/dev/null || stat -f %z "$K") bytes)"
+          echo "=== touch 符号（期望值见括号）==="
+          for kw in fuxi_control_touch native_touch_set_sink hasEventDriverCached fuxi-touch-edge; do
+            n=$(strings -n 8 "$K" | grep -c "$kw" || true)
+            printf '  %-24s %s\n' "$kw" "$n"
+          done
+          echo ""
+          echo "期望: fuxi_control_touch >=1, native_touch_set_sink >=2(含定义), hasEventDriverCached >=1"
+          if strings -n 8 "$K" | grep -q 'l_native_touch_set_sink'; then
+            echo "  ★ native_touch_set_sink 有定义（good）"
+          else
+            echo "  ✗ native_touch_set_sink 只有引用没有定义（还会被 weak_import 解析成 NULL）"
+          fi
 
       - name: Prepare Mesa, the translator and the Mesa venv
         if: ${{ !cancelled() && inputs.build_addon }}
