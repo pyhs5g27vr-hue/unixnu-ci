@@ -1528,6 +1528,14 @@ jobs:
           done
           # 期望: fuxi_control_touch >= 1, native_touch_set_sink >= 3, sinkKeepAlive >= 2
 
+      - name: Add INPUT verb to QcomXnuUsbDebug (USB gestures for CI kernels, DeepSeek 2026-11-17)
+        if: ${{ !cancelled() && inputs.build_kernel }}
+        run: |
+          set -euo pipefail
+          # Edits the source under device/ (the tree only symlinks it later, inside the kernel step).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/add-input-verb.py" "$GITHUB_WORKSPACE"
+          grep -c SXNU_CONTROL_VERB_INPUT device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h device/drivers/QcomXnuUsbDebug/kernel/QcomXnuUsbDebug.c
+
       - name: kernel
         if: ${{ inputs.build_kernel }}
         working-directory: UniXNU
