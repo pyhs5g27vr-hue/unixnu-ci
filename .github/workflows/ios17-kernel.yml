@@ -1599,6 +1599,24 @@ jobs:
           else:
               print("already in the patch list:", len(have))
           PY
+          # fuxi 2026-11-16: icons flashed with red and blue exchanged on ci-k4 (user). Upstream UniXNU 93ad2ce (2026-11-03) "keep a linear
+          # image's swap on the memory side of GMEM transfers": a GMEM pass stored drawn BGRA8 colour with red and blue exchanged; passes
+          # the autotune sends to system memory were right, hence the flashing. Applies after turnip-gmem-mutable-swap.patch (in the base).
+          GS=patches/mesa/turnip-gmem-memory-side-swap.patch
+          if [ ! -f "$GS" ]; then
+            curl -fsSL "https://raw.githubusercontent.com/UniXNU/UniXNU/93ad2ce4f33dfe13a5c6d976ee0fad45749eb101/$GS" -o "$GS" \
+              && echo "fetched gmem memory-side swap: $(wc -c < "$GS") bytes" || echo "WARN: could not fetch $GS" >&2
+          fi
+          python3 - scripts/data/adreno-compiler-inputs.json "$GS" <<'PY'
+          import json, sys
+          from pathlib import Path
+          p, name = sys.argv[1], sys.argv[2]
+          d = json.load(open(p)); have = d.get("patches") or []
+          if Path(name).is_file() and name not in have:
+              have.append(name); d["patches"] = have
+              open(p, "w").write(json.dumps(d, indent=2) + "\n")
+          print("gmem swap in the patch list:", name in have, len(have))
+          PY
           command -v glslangValidator >/dev/null || brew install glslang
           python3 - <<'PY'
           import json, subprocess, sys
