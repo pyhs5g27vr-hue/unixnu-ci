@@ -1,0 +1,268 @@
+diff --git a/include/QcomXnuUsbDebug.h b/include/QcomXnuUsbDebug.h
+index 987ab0b..f4bd482 100644
+--- a/include/QcomXnuUsbDebug.h
++++ b/include/QcomXnuUsbDebug.h
+@@ -88,6 +88,9 @@ typedef struct qcom_usb_debug_status {
+     uint64_t rx_overflow, control_replies;
+     uint32_t rx_pending, rx_generation;
+     uint32_t control_enabled, control_hook_owned, control_reboot_state, control_rejected;
++    /* Latched on the first poll failure; readable by the independent on-screen status window. */
++    int32_t dwc3_failed;
++    uint32_t dwc3_last_event;
+ } qcom_usb_debug_status;
+ 
+ #ifdef __cplusplus
+diff --git a/kernel/QcomXnuUsbDebug.c b/kernel/QcomXnuUsbDebug.c
+index 0d177f3..cd07507 100644
+--- a/kernel/QcomXnuUsbDebug.c
++++ b/kernel/QcomXnuUsbDebug.c
+@@ -39,6 +39,10 @@ static uint8_t usb_tables[QUSB_DOMAIN_PT_BYTES] __attribute__((aligned(PAGE_BYTE
+ static uint8_t usb_context[NATIVE_CONTEXT_BYTES] __attribute__((aligned(DWC3_CONTEXT_ALIGNMENT)));
+ static volatile unsigned int usb_busy;
+ static volatile unsigned int usb_diag_enabled, usb_diag_checkpoint, usb_diag_resetting, usb_diag_target;
++/* fuxi-reset-test=N: after N polls, reset the SoC to prove the PSCI SYSTEM_RESET conduit. */
++static unsigned int reset_test_after;
++/* fuxi-cdc-fault=N: one-shot I/O fault after N polls, to exercise the CDC watchdog end to end. */
++static unsigned int usb_fault_after;
+ static volatile unsigned int usb_diag_mode, usb_diag_polling;
+ static uint8_t usb_log_bytes[SOC_USB_LOG_BUFFER_BYTES];
+ static struct soc_usb_buffer usb_log_buffer = {
+@@ -53,6 +57,11 @@ static struct {
+     QUSB_DOMAIN_PLATFORM domain_platform;
+     uint64_t deadline;
+     unsigned int deadline_active, deadline_expired, core_initialized;
++    /* CDC watchdog: first time an I/O fault was seen (0 = healthy). */
++    uint64_t fault_at;
++    /* Control stale watchdog: last accepted control frame (0 = no host yet). */
++    uint64_t control_last;
++    unsigned int control_seen;
+ } native;
+ static struct {
+     struct sxnu_control_parser parser;
+@@ -62,6 +71,11 @@ static struct {
+ static volatile unsigned int control_started, control_enabled;
+ static volatile unsigned int control_hook_owned, control_reboot_requested;
+ static volatile unsigned int control_reboot_taken, control_reboot_armed;
++/* Set while a reboot request is being committed. Console output is frozen for that window so the
++ * control reply stays the tail of the DWC3 transmit FIFO: without the freeze, the steady stream of
++ * kernel log lines keeps the FIFO occupied and the reply can never be shown to have left the
++ * controller before the reset tears it down. */
++static volatile unsigned int control_tx_frozen;
+ /* 1 when the accepted request asked for the bootloader target; the reset worker reads it. */
+ volatile unsigned int qcom_usb_debug_control_fastboot;
+ static volatile uint32_t control_rejected, control_reply_count, control_failures;
+@@ -188,7 +202,9 @@ static void backlog_drain_owned(void)
+     size_t free_bytes = DWC3_TX_BYTES - dwc3_queued(native.core);
+     /* usb_busy already owns DWC3 and masks local IRQ/FIQ. Only queue CPU
+      * memory while the backlog guard is held; MMIO is serviced afterwards. */
+-    if (free_bytes)
++    /* A pending reboot freezes the console stream, so the control reply stays the tail of the
++     * transmit FIFO and the FIFO can drain fully before the controller is torn down. */
++    if (free_bytes && !__atomic_load_n(&control_tx_frozen, __ATOMIC_ACQUIRE))
+         usb_log_replayed += soc_usb_buffer_drain(&usb_log_buffer, backlog_sink, 0, free_bytes);
+ }
+ static void buffer_status_owned(void)
+@@ -630,6 +646,10 @@ int qcom_usb_debug_init(void)
+     if (!PE_parse_boot_argn("qcom-usb-debug", &enabled, sizeof(enabled)) || enabled != 1) {
+         native.status.phase = QCOM_USB_DEBUG_DISABLED; goto out;
+     }
++    {unsigned int test = 0;
++     if (PE_parse_boot_argn("fuxi-reset-test", &test, sizeof(test)) && test) reset_test_after = test;
++     if (PE_parse_boot_argn("fuxi-cdc-fault", &test, sizeof(test)) && test) usb_fault_after = test;}
++
+     native.status.phase = QCOM_USB_DEBUG_PREPARING;
+     diag_checkpoint(QCOM_USB_DEBUG_DIAG_AFTER_ACQUIRE);
+     if (dwc3_context_bytes() > sizeof(usb_context)) {
+@@ -824,19 +844,32 @@ static int poll_owned(void)
+ {
+     int ret;
+     if (native.status.phase != QCOM_USB_DEBUG_ACTIVE) return 0;
++    if (reset_test_after && native.status.poll_calls >= reset_test_after) platform_smc_reset();
+     backlog_drain_owned();
+     loss_notice_owned();
++    native.status.io_failed = 0;
+     ret = dwc3_poll(native.core, 1);
+     native.status.poll_calls++;
++    if (usb_fault_after && native.status.poll_calls >= usb_fault_after) {
++        /* Hold the fault so the 3 s watchdog can observe a persistent failure. */
++        native.status.io_failed = 1;
++    }
+     native.status.last_poll_events = ret < 0 ? 0u : (uint32_t)ret;
+     buffer_status_owned();
+     if (ret < 0 || native.status.io_failed) {
++        dwc3_failure_state(native.core, &native.status.dwc3_failed,
++                           &native.status.dwc3_last_event);
+         native.status.core_result = ret;
+         native.status.error = native.deadline_active && native.deadline_expired ? QCOM_USB_DEBUG_DEADLINE_EXPIRED :
+                                                       QCOM_USB_DEBUG_CORE_POLL_FAILED;
+-        native.status.phase = QCOM_USB_DEBUG_IO_FAILED;
++        native.status.io_failed = 1;
++        /* Keep the phase ACTIVE so the worker keeps polling; the watchdog below
++         * resets the SoC once the fault has persisted for watchdog_seconds. */
++        if (!native.fault_at) native.fault_at = counter();
+         return 0;
+     }
++    native.status.io_failed = 0;
++    native.fault_at = 0;
+     return 1;
+ }
+ static uint64_t control_mix(uint64_t value)
+@@ -868,6 +901,23 @@ static void control_rotate_session_owned(void)
+                              usb_control_context.state.generation);
+     sxnu_control_parser_reset(&usb_control_context.parser);
+ }
++/* Wait until the DWC3 transmit FIFO has room for `bytes`. Must be called with usb_busy held: the
++ * caller already owns the controller, and re-entering the guard here would deadlock. */
++static void control_wait_tx_space(size_t bytes, unsigned int timeout_ms)
++{
++    uint64_t start, ticks;
++    if (!native.core_initialized) return;
++    start = counter();
++    ticks = native.status.counter_frequency ? native.status.counter_frequency : 0;
++    while (native.status.phase == QCOM_USB_DEBUG_ACTIVE) {
++        if (DWC3_TX_BYTES - dwc3_queued(native.core) >= bytes) return;
++        /* Poll the controller so the pending IN transfer can complete and free FIFO space. */
++        if (dwc3_poll(native.core, 4) < 0) return;
++        if (ticks && counter() - start >= ticks * timeout_ms / 1000u) return;
++        delay_us(0, 100);
++    }
++}
++
+ static size_t control_reply_queue(const char *reply, size_t bytes)
+ {
+     uint8_t wire[SXNU_CONTROL_REPLY_BYTES + 1u];
+@@ -876,6 +926,11 @@ static size_t control_reply_queue(const char *reply, size_t bytes)
+     if (!reply || !bytes || bytes > SXNU_CONTROL_REPLY_BYTES || !acquire(&flags)) return 0;
+     if (native.status.phase == QCOM_USB_DEBUG_ACTIVE) {
+         backlog_drain_owned();
++        /* A full FIFO used to drop the reply outright, which also dropped the reboot request
++         * that the reply was acknowledging. Wait a bounded window for room instead, so a busy
++         * console cannot swallow a state-changing command. */
++        if (DWC3_TX_BYTES - dwc3_queued(native.core) < bytes + 1u)
++            (void)control_wait_tx_space(bytes + 1u, 500u);
+         if (DWC3_TX_BYTES - dwc3_queued(native.core) >= bytes + 1u) {
+             wire[0] = (uint8_t)'\n';
+             bytes_copy(wire + 1u, reply, bytes);
+@@ -886,6 +941,36 @@ static size_t control_reply_queue(const char *reply, size_t bytes)
+     if (queued) (void)__atomic_add_fetch(&control_reply_count, 1u, __ATOMIC_RELAXED);
+     return queued ? bytes : 0;
+ }
++/* Wait until the last control reply has actually left the controller.
++ *
++ * The reply is queued at the tail of the DWC3 transmit FIFO, and the console stream is frozen for
++ * the duration of the wait (see control_tx_frozen), so the FIFO occupancy reaching zero means the
++ * reply and everything queued before it has been handed to the host. The old code waited only for
++ * the CPU-side backlog to empty, which is already the case at this point, so the reset tore the
++ * controller down while the reply was still in the transmit FIFO and the host never saw it.
++ *
++ * The FIFO only empties when the controller completes the bulk-IN transfer, so this has to poll the
++ * hardware; sleeping alone would never move the bytes. Returns 1 when the reply left the
++ * controller, 0 on timeout or a transport failure. */
++static int control_wait_reply_sent(unsigned int timeout_ms)
++{
++    uint64_t flags;
++    uint64_t start, ticks;
++    int drained = 0;
++    if (!native.core_initialized) return 0;
++    if (!acquire(&flags)) return 0;
++    start = counter();
++    ticks = native.status.counter_frequency ? native.status.counter_frequency : 0;
++    while (native.status.phase == QCOM_USB_DEBUG_ACTIVE) {
++        if (dwc3_queued(native.core) == 0) { drained = 1; break; }
++        /* Poll the controller so the pending IN transfer can complete. */
++        if (dwc3_poll(native.core, 4) < 0) break;
++        if (ticks && counter() - start >= ticks * timeout_ms / 1000u) break;
++        delay_us(0, 100);
++    }
++    release(flags);
++    return drained;
++}
+ static size_t control_reply_hello(char *reply, size_t capacity,
+                                   const struct sxnu_control_frame *frame)
+ {
+@@ -1105,10 +1190,17 @@ static void control_handle_frame(const struct sxnu_control_frame *frame,
+              * the request to the reset layer. Mode 1 asks for the bootloader target, mode 0 for a
+              * plain reset. */
+             extern int qcom_reset_request(int mode);
+-            for (unsigned int n = 0; n < 2000u; ++n) {
+-                if (soc_usb_buffer_pending(&usb_log_buffer) == 0) break;
+-                delay_us(0, 100);
+-            }
++            /* Freeze the console stream first. The ACK was queued at the tail of the transmit FIFO,
++             * and iOS keeps producing log lines, so without the freeze the FIFO never drains and
++             * the reply cannot be proven to have left the controller before the reset. */
++            __atomic_store_n(&control_tx_frozen, 1u, __ATOMIC_RELEASE);
++            /* The ACK is already queued in the DWC3 transmit FIFO. The old wait only looked at
++             * soc_usb_buffer_pending(), the CPU-side backlog, which is empty at this point, so it
++             * returned immediately and the reset tore the controller down while the ACK was still
++             * in the FIFO. The host saw a closed socket and no reply even though the device did
++             * reboot. Wait for the FIFO itself to empty instead: only then has the controller
++             * actually handed the ACK to the host. */
++            (void)control_wait_reply_sent(2000u);
+             /* Claim it first, so the module's own reboot worker cannot commit the same request. */
+             (void)qcom_usb_debug_control_take_reboot();
+             (void)qcom_reset_request(accepted == SXNU_CONTROL_VERB_REBOOT_FASTBOOT ? 1 : 0);
+@@ -1285,6 +1377,23 @@ void qcom_usb_debug_poll(void)
+     uint32_t generation = 0;
+     size_t control_bytes_count = 0;
+     int observed = 0;
++    /* An I/O fault latches IO_FAILED and stops polling. Instead of freezing the
++     * CDC port until the next reboot, reset the DWC3 device side in place. The
++     * host sees one disconnect/reconnect; the collector re-attaches. */
++    /* CDC watchdog: a transport that stays faulty for watchdog_seconds is
++     * recovered by a SoC reset (certified with fuxi-reset-test). */
++    {unsigned int seconds = 3;
++     PE_parse_boot_argn("fuxi-cdc-watchdog", &seconds, sizeof(seconds));
++     if (seconds && native.status.io_failed && native.fault_at &&
++         counter() - native.fault_at >= native.status.counter_frequency * seconds)
++         platform_smc_reset();
++     /* A host that has talked before but has not been answered for stale seconds
++      * means the control path is wedged; reset rather than stay deaf. */
++     unsigned int stale = 0;   /* off unless the boot argument enables it */
++     PE_parse_boot_argn("fuxi-cdc-stale", &stale, sizeof(stale));
++     if (stale && native.control_seen && native.control_last &&
++         counter() - native.control_last >= native.status.counter_frequency * stale)
++         platform_smc_reset();}
+     if (native.status.phase != QCOM_USB_DEBUG_ACTIVE || !acquire(&flags)) return;
+     (void)poll_owned();
+     if (__atomic_load_n(&control_enabled, __ATOMIC_ACQUIRE) &&
+@@ -1294,6 +1403,10 @@ void qcom_usb_debug_poll(void)
+         generation = dwc3_rx_generation(native.core);
+         control_bytes_count = dwc3_read(native.core, control_bytes,
+                                             sizeof(control_bytes));
++        if (control_bytes_count) {
++            native.control_seen = 1;
++            native.control_last = counter();
++        }
+         observed = 1;
+     }
+     release(flags);
+diff --git a/usb/Dwc3.c b/usb/Dwc3.c
+index 848dc2c..6a34093 100644
+--- a/usb/Dwc3.c
++++ b/usb/Dwc3.c
+@@ -629,6 +629,11 @@ void dwc3_snapshot(struct dwc3 *d, struct dwc3_snapshot *s)
+     s->rx_overflow = d->rx_overflow;
+     for (ep = 0; ep < EP_COUNT; ep++) if (d->active[ep]) s->active_endpoints |= 1u << ep;
+ }
++void dwc3_failure_state(const struct dwc3 *d, int32_t *failed, uint32_t *last_event)
++{
++    if (failed) *failed = d ? d->failed : 0;
++    if (last_event) *last_event = d ? d->last_event : 0;
++}
+ int dwc3_stop(struct dwc3 *d)
+ {
+     unsigned ep;
+diff --git a/usb/Dwc3.h b/usb/Dwc3.h
+index 8e0662a..8342c7a 100644
+--- a/usb/Dwc3.h
++++ b/usb/Dwc3.h
+@@ -83,6 +83,8 @@ struct dwc3_snapshot {
+ };
+ /* Read-only diagnostics, for callers that already own powered MMIO access. */
+ void dwc3_snapshot(struct dwc3 *dev, struct dwc3_snapshot *snapshot);
++/* Failure latch only: no MMIO reads after an I/O fault. */
++void dwc3_failure_state(const struct dwc3 *dev, int32_t *failed, uint32_t *last_event);
+ /* Stops DMA. Do not release mapping until this succeeds. */
+ int dwc3_stop(struct dwc3 *dev);
+ 

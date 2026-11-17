@@ -338,6 +338,9 @@ jobs:
           git clone -q https://github.com/xiaoleGun/QcomXnuUsbDebug.git "$RUNNER_TEMP/qud" && git -C "$RUNNER_TEMP/qud" checkout -q "$QUD"
           cp -R device/drivers/QcomXnuUsbDebug/. "$RUNNER_TEMP/qud/"; rm -rf device/drivers/QcomXnuUsbDebug; mv "$RUNNER_TEMP/qud" device/drivers/QcomXnuUsbDebug
           echo "QcomXnuUsbDebug at $(git -C device/drivers/QcomXnuUsbDebug rev-parse --short HEAD), changed files: $(git -C device/drivers/QcomXnuUsbDebug status --short | wc -l)"
+          # Author ljhhkx529 QUD e97a92fe: the REBOOT-FASTBOOT reply leaves the DWC3 TX FIFO before the reset (3-way merged).
+          git -C device/drivers/QcomXnuUsbDebug apply --verbose "$GITHUB_WORKSPACE/.github/fuxi/qud-author-reboot-fix.patch"
+          grep -c dwc3_failure_state device/drivers/QcomXnuUsbDebug/usb/Dwc3.c
           for r in device/drivers/*/ device/kits/*/ device; do
             [ -d "$r" ] || continue
             [ -e "$r/.git" ] && continue
