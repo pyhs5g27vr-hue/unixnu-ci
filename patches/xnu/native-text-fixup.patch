@@ -1,8 +1,8 @@
 diff --git a/bsd/kern/ubc_subr.c b/bsd/kern/ubc_subr.c
-index 22c5bf1..05c6504 100644
+index 62a450a..1f20618 100644
 --- a/bsd/kern/ubc_subr.c
 +++ b/bsd/kern/ubc_subr.c
-@@ -6043,6 +6043,172 @@ cs_validate_hash(
+@@ -5888,6 +5888,185 @@ cs_validate_hash(
  	return validated;
  }
  
@@ -21,6 +21,7 @@ index 22c5bf1..05c6504 100644
 +	uint8_t         original[CS_TEXT_FIXUP_BYTES];
 +	uint8_t         replacement[CS_TEXT_FIXUP_BYTES];
 +	uint32_t        length;
++	uint32_t        applied;        /* its 'applied' line was printed */
 +};
 +static TUNABLE_STR(cs_text_fixup_arg0, 160, "text-fixup0", "");
 +static TUNABLE_STR(cs_text_fixup_arg1, 160, "text-fixup1", "");
@@ -148,12 +149,16 @@ index 22c5bf1..05c6504 100644
 + * number of fixups written, so the caller makes the instruction cache coherent.
 + */
 +uint32_t
-+cs_text_fixup_page(struct vnode *vp, memory_object_offset_t page_offset, void *kva)
++cs_text_fixup_range(struct vnode *vp, memory_object_offset_t page_offset, void *kva, vm_size_t lo, vm_size_t hi, const char *why)
 +{
 +	uint32_t written = 0;
++	if (cs_text_fixup_count == 0 || vp == NULLVP) {
++		return 0;
++	}
 +	for (uint32_t i = 0; i < cs_text_fixup_count; i++) {
-+		const struct cs_text_fixup *f = &cs_text_fixups[i];
-+		if (f->offset < page_offset || f->offset + f->length > page_offset + PAGE_SIZE) {
++		struct cs_text_fixup *f = &cs_text_fixups[i];
++		/* Only bytes inside [lo, hi) of this page: a chunk validated alone must not change bytes of an unvalidated chunk. */
++		if (f->offset < page_offset + lo || f->offset + f->length > page_offset + hi) {
 +			continue;
 +		}
 +		if (vp == NULLVP || vp->v_name == NULL || strcmp(vp->v_name, f->name) != 0) {
@@ -165,18 +170,26 @@ index 22c5bf1..05c6504 100644
 +		}
 +		memcpy(at, f->replacement, f->length);
 +		written++;
-+		if (os_atomic_inc(&cs_text_fixup_applied, relaxed) <= 16) {
-+			printf("text-fixup: %s+0x%llx (%u bytes) applied\n", f->name, f->offset, f->length);
++		os_atomic_inc(&cs_text_fixup_applied, relaxed);
++		if (f->applied == 0) {
++			f->applied = 1;
++			printf("text-fixup: %s+0x%llx (%u bytes) applied (%s)\n", f->name, f->offset, f->length, why);
 +		}
 +	}
 +	return written;
++}
++
++uint32_t
++cs_text_fixup_page(struct vnode *vp, memory_object_offset_t page_offset, void *kva)
++{
++	return cs_text_fixup_range(vp, page_offset, kva, 0, PAGE_SIZE, "slow");
 +}
 +
  boolean_t
  cs_validate_range(
  	struct vnode    *vp,
 diff --git a/osfmk/vm/vm_fault.c b/osfmk/vm/vm_fault.c
-index 5184390..5bf9f03 100644
+index 5184390..e97159a 100644
 --- a/osfmk/vm/vm_fault.c
 +++ b/osfmk/vm/vm_fault.c
 @@ -100,6 +100,9 @@
@@ -189,7 +202,28 @@ index 5184390..5bf9f03 100644
  
  #include <sys/codesign.h>
  #include <sys/code_signing.h>
-@@ -7797,6 +7800,14 @@ vm_page_validate_cs_mapped_slow(
+@@ -136,6 +139,9 @@ unsigned int    vm_object_pagein_throttle = 16;
+ extern void throttle_lowpri_io(int);
+ 
+ extern struct vnode *vnode_pager_lookup_vnode(memory_object_t);
++#if __arm64__
++static void vm_page_cs_text_fixup_resident(vm_page_t page, vm_size_t lo, vm_size_t hi, const char *why);
++#endif
+ 
+ uint64_t vm_hard_throttle_threshold;
+ 
+@@ -2684,6 +2690,10 @@ vm_fault_cs_check_violation(
+ 			 * In the code signing monitor we trust :)
+ 			 */
+ 			vm_cs_defer_to_csm++;
++#if __arm64__
++			/* The monitor checks this page, the VM does not: the slow path that writes fixups never runs for it. */
++			vm_page_cs_text_fixup_resident(m, 0, PAGE_SIZE, "csm");
++#endif
+ 		} else {
+ 			vm_cs_defer_to_csm_not++;
+ 			vm_page_validate_cs(m, fault_page_size, fault_phys_offset);
+@@ -7797,6 +7807,14 @@ vm_page_validate_cs_mapped_slow(
  	page->vmp_cs_tainted |= tainted;
  	page->vmp_cs_nx |= nx;
  
@@ -204,15 +238,87 @@ index 5184390..5bf9f03 100644
  #if CHECK_CS_VALIDATION_BITMAP
  	if (page->vmp_cs_validated == VMP_CS_ALL_TRUE &&
  	    page->vmp_cs_tainted == VMP_CS_ALL_FALSE) {
+@@ -7807,6 +7825,33 @@ vm_page_validate_cs_mapped_slow(
+ #endif /* CHECK_CS_VALIDATION_BITMAP */
+ }
+ 
++#if __arm64__
++/*
++ * Text fixups (bsd/kern/ubc_subr.c) are written by the slow validation path. A page that skips it, because its validation bit
++ * or the pager's validation bitmap was already set, because it was validated chunk by chunk, or because validation was left to
++ * the code-signing monitor, would keep the original bytes. Apply them here, through the physical aperture, without touching
++ * the object lock or the page's cs bits. cs_text_fixup_range only writes where the original bytes still match.
++ */
++static void
++vm_page_cs_text_fixup_resident(vm_page_t page, vm_size_t lo, vm_size_t hi, const char *why)
++{
++	vm_object_t object = VM_PAGE_OBJECT(page);
++	if (object == VM_OBJECT_NULL || !object->code_signed || object->internal ||
++	    object->pager == MEMORY_OBJECT_NULL || !object->pager_ready) {
++		return;
++	}
++	struct vnode *vp = vnode_pager_lookup_vnode(object->pager);   /* NULL for a pager that is not a vnode pager */
++	if (vp == NULLVP) {
++		return;
++	}
++	ppnum_t pn = VM_PAGE_GET_PHYS_PAGE(page);
++	if (cs_text_fixup_range(vp, page->vmp_offset + object->paging_offset,
++	    (void *)phystokv((pmap_paddr_t)pn << PAGE_SHIFT), lo, hi, why) != 0) {
++		cache_sync_page(pn);
++	}
++}
++#endif
++
+ void
+ vm_page_validate_cs_mapped(
+ 	vm_page_t       page,
+@@ -7817,6 +7862,11 @@ vm_page_validate_cs_mapped(
+ 	if (!vm_page_validate_cs_fast(page, fault_page_size, fault_phys_offset)) {
+ 		vm_page_validate_cs_mapped_slow(page, kaddr);
+ 	}
++#if __arm64__
++	else if (page->vmp_cs_validated == VMP_CS_ALL_TRUE && page->vmp_cs_tainted == VMP_CS_ALL_FALSE) {
++		vm_page_cs_text_fixup_resident(page, 0, PAGE_SIZE, "mapped");
++	}
++#endif
+ }
+ 
+ static void
+@@ -7899,6 +7949,11 @@ vm_page_validate_cs(
+ 	vm_object_lock_assert_held(object);
+ 
+ 	if (vm_page_validate_cs_fast(page, fault_page_size, fault_phys_offset)) {
++#if __arm64__
++		if (page->vmp_cs_validated == VMP_CS_ALL_TRUE && page->vmp_cs_tainted == VMP_CS_ALL_FALSE) {
++			vm_page_cs_text_fixup_resident(page, 0, PAGE_SIZE, "fast");
++		}
++#endif
+ 		return;
+ 	}
+ 	vm_page_map_and_validate_cs(object, page);
+@@ -7970,6 +8025,11 @@ vm_page_validate_cs_mapped_chunk(
+ 	if (tainted) {
+ 		*tainted_p = tainted;
+ 	}
++#if __arm64__
++	if (validated && !tainted) {
++		vm_page_cs_text_fixup_resident(page, offset_in_page, offset_in_page + chunk_size, "chunk");
++	}
++#endif
+ }
+ 
+ static void
 diff --git a/osfmk/vm/vm_protos.h b/osfmk/vm/vm_protos.h
-index 02188d6..b04640d 100644
+index 02188d6..92a0d3a 100644
 --- a/osfmk/vm/vm_protos.h
 +++ b/osfmk/vm/vm_protos.h
-@@ -539,6 +539,7 @@ extern boolean_t cs_validate_range(struct vnode *vp,
+@@ -539,6 +539,9 @@ extern boolean_t cs_validate_range(struct vnode *vp,
      const void *data,
      vm_size_t size,
      unsigned *result);
 +extern uint32_t cs_text_fixup_page(struct vnode *vp, memory_object_offset_t page_offset, void *kva);
++extern uint32_t cs_text_fixup_range(struct vnode *vp, memory_object_offset_t page_offset, void *kva,
++    vm_size_t lo, vm_size_t hi, const char *why);
  extern void cs_validate_page(
  	struct vnode *vp,
  	memory_object_t pager,
