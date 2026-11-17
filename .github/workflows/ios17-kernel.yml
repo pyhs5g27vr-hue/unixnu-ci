@@ -837,6 +837,9 @@ jobs:
           import sys
           p = sys.argv[1]
           s = open(p).read()
+          if 'control_wait_tx_space(' in s:
+              print('reply room: author fix (control_wait_tx_space) already present, skipped', p)
+              sys.exit(0)
           def sub(old, new):
               global s
               assert s.count(old) == 1, old
