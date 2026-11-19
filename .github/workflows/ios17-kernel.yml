@@ -1498,6 +1498,26 @@ jobs:
           else echo "::warning::df4a905 port did not apply (base left as it is)"; git -C UniXNU/drivers/GopFramebuffer apply --check -v "$F" || true; fi
           grep -n 'native_ufs_dpu_state' UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp | head -3
 
+      - name: fuxi WiFi and Bluetooth module sources (Kerfand 968a7c6 builds them; its repository carries only their READMEs)
+        if: ${{ inputs.build_kernel }}
+        run: |
+          set -e
+          # 968a7c6's build-ios17-legacy-display.py links Ath12kWifi f6bf561 (ROOT/drivers/Ath12kWifiLegacy, legacy runtime) and
+          # QcaBluetooth 22ff97f (ROOT.parents[2]/drivers/QcaBluetooth). Bases that do not build them (53f) only get unused files.
+          fill() {  # fill DIR REPO COMMIT MARKER
+            if [ -f "$1/$4" ]; then echo "$1: already has $4"; return; fi
+            rm -rf "$RUNNER_TEMP/src-fill"; git clone -q "https://github.com/$2.git" "$RUNNER_TEMP/src-fill"
+            git -C "$RUNNER_TEMP/src-fill" checkout -q "$3"; mkdir -p "$1"
+            (cd "$RUNNER_TEMP/src-fill" && tar --exclude=.git -cf - .) | (cd "$1" && tar -xf -)
+            echo "$1 <- $2 $(git -C "$RUNNER_TEMP/src-fill" rev-parse --short HEAD)"; ls "$1" | head -20
+          }
+          if grep -rqs 'Ath12kWifiLegacy' device/ios17/overlay/scripts/build-ios17-legacy-display.py device-ios17/scripts/build-ios17-legacy-display.py; then
+            fill device/drivers/Ath12kWifiLegacy UniXNU/Ath12kWifi f6bf561f92cc include/nw_abi.h
+          else echo "this base does not build WiFi into the display archive"; fi
+          if grep -rqs 'QcaBluetooth' device/ios17/overlay/scripts/build-ios17-legacy-display.py device-ios17/scripts/build-ios17-legacy-display.py; then
+            fill UniXNU/drivers/QcaBluetooth UniXNU/QcaBluetooth 22ff97f93416 include/qbt.h
+          else echo "this base does not build Bluetooth into the display archive"; fi
+
       - name: Patch FuxiTouchProbe (fuxi_control_touch + keep native_touch_set_sink alive)
         if: ${{ !cancelled() && inputs.build_kernel }}
         working-directory: UniXNU
