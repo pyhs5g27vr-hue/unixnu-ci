@@ -1,0 +1,48 @@
+diff --git a/NativeLegacyDisplay.cpp b/NativeLegacyDisplay.cpp
+index d7f1b87..eb31b8b 100644
+--- a/NativeLegacyDisplay.cpp
++++ b/NativeLegacyDisplay.cpp
+@@ -435,13 +435,18 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+         return pick;
+     }
+     // True once the GPU wrote everything handed to it before this request arrived (or gave up after 250 ms); otherwise arms the poll.
++    // fuxi port of GopFramebuffer df4a905: a failed fence query is not completion, the first good snapshot is kept for the request, and
++    // a slow GPU leaves the previous frame on screen (no flip of an unwritten frame after 250 ms) until completion or cancellation.
++    bool fenceCaptured=false,fenceSlow=false;
+     bool gpuWrote(const OriginalLegacySwapRequest *request) {
+-        uint32_t submitted=0,retired=0;
+-        if(!&native_adreno_fences || !native_adreno_fences(&submitted,&retired))return true;
+         if(fenceFor!=request) {
+-            fenceFor=request;fenceTarget=submitted;fenceSince=0;
++            fenceFor=request;fenceTarget=0;fenceSince=0;fenceCaptured=false;fenceSlow=false;
+         }
+-        if(int32_t(retired-fenceTarget)>=0) {
++        uint32_t submitted=0,retired=0;
++        if(!&native_adreno_fences)return true;   /* CPU-only backend: no GPU fence interface linked */
++        const bool known=native_adreno_fences(&submitted,&retired);
++        if(known && !fenceCaptured) {fenceTarget=submitted;fenceCaptured=true;}
++        if(known && int32_t(retired-fenceTarget)>=0) {
+             if(fenceSince)note(3,-1,request);
+             if(fenceSince) {
+                 uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-fenceSince,&ns);
+@@ -454,9 +459,9 @@ class NativeLegacyDisplay : public IOMobileFramebufferLegacy {
+         }
+         if(!fenceSince) {fenceSince=mach_absolute_time();native_legacy_direct[9]=native_legacy_direct[9]+1;stat(6);note(2,-1,request);}
+         uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-fenceSince,&ns);
+-        if(ns>=250000000ull) {
++        if(ns>=250000000ull && !fenceSlow) {
+             native_legacy_direct[12]=native_legacy_direct[12]+1;
+-            fenceFor=nullptr;return true;
++            fenceSlow=true;
+         }
+         fenceTimer->setTimeoutUS(200);
+         return false;
+@@ -875,6 +880,8 @@ public:
+     // frame is not held behind the cancelled one. The family only logs the result; the slot used to be a guard that panicked.
+     bool cancelSwapsAfterTimeout() override {
+         native_legacy_swap_timeouts=native_legacy_swap_timeouts+1;
++        if(fenceTimer)fenceTimer->cancelTimeout();
++        fenceFor=nullptr;fenceTarget=0;fenceSince=0;fenceCaptured=false;fenceSlow=false;
+         for(auto &entry: validated)entry=nullptr;
+         gpuRequest=nullptr;gpuRetired=false;transferred=false;
+         return true;
