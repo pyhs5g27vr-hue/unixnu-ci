@@ -30,6 +30,10 @@ on:
         description: Also build kernel.macho.gpuaddon (Turnip, Metal plugin, status bar, owner trust) for ios17e
         type: boolean
         default: false
+      fuxi_dpu:
+        description: GPU direct scanout port (NativeUfs display bank window, probe stubs dropped, df4a905 fence wait)
+        type: boolean
+        default: false
       runner:
         description: macOS runner label
         required: true
@@ -795,7 +799,7 @@ jobs:
           sub('static unsigned ready;\n',
               'static unsigned ready;\n'
               '/* Direct mode: read the fixed scanout at capture/peek time, every QUD_SHOT_DIRECT_STEP-th pixel and row. */\n'
-              '#define QUD_SHOT_DIRECT_STEP 2u\n'
+              '#define QUD_SHOT_DIRECT_STEP 4u\n'
               'static unsigned direct;\n')
           # register_framebuffer: accept any size up to the dimension limit; too big for the copy buffer -> direct mode.
           sub('    if (!fb || !fb->pixels || !dimensions(fb->width, fb->height) ||\n',
@@ -1481,7 +1485,7 @@ jobs:
           grep -rn 'sheng_battery_probe();' device device-ios17 --include=Ios17LegacyDisplayProbe.cpp || echo 'no battery probe: this base has no ADSP stack'
 
       - name: fuxi GPU direct scanout (ShengUfs f2d6a4a + 99d8bcd, GopFramebuffer df4a905; 2026-11-20)
-        if: ${{ inputs.build_kernel }}
+        if: ${{ inputs.build_kernel && inputs.fuxi_dpu }}
         run: |
           set -e
           # The display bank's stage 1 window in NativeUfs (sheng-dpu-scanout=1+), and the display probe's always-off stubs dropped.
@@ -1561,6 +1565,11 @@ jobs:
           # Edits the source under device/ (the tree only symlinks it later, inside the kernel step).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/add-input-verb.py" "$GITHUB_WORKSPACE"
           grep -c SXNU_CONTROL_VERB_INPUT device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h device/drivers/QcomXnuUsbDebug/kernel/QcomXnuUsbDebug.c
+          # 2026-11-20: the wire half add-input-verb.py missed (5-byte verb + arguments before the CRC, accept/commit range, reply name).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fix-input-verb.py" device device-ios17
+          grep -c 'return "INPUT";' device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h
+          # 2026-11-20: home / switcher gestures (53f disabled NativeHidInput's edge hook; Kerfand 82e/968 turned it back on).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" device device-ios17 || echo "::warning::edge hook source not found before the kernel step"
 
       - name: kernel
         if: ${{ inputs.build_kernel }}
@@ -1575,6 +1584,9 @@ jobs:
           export UNIXNU_OUT="$PWD/out-ios17" UNIXNU_KERNELCACHE="$PWD/out-ios17/ipsw/21H16/kernelcache.decompressed"
           [ -f ../device/scripts/extract-files.py ] && python3 ../device/scripts/extract-files.py --device ../device || echo "extract-files skipped/failed"
           ./unixnu defconfig fuxi_ios17_kernel_defconfig -D ../device-ios17
+          # 2026-11-20: the edge hook again on whatever copy defconfig put in the tree (fuxi-touch-edge=0 turns it off at boot).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" scripts out-ios17/fuxi/tree ../device-ios17 ../device || echo "::warning::edge hook not switched in the tree"
+          grep -n 'fuxi-touch-edge' scripts/build-ios17-hid-input.py 2>/dev/null | head -2 || true
           # ★ 壁纸：让 build-ios17-legacy-display.py 在把 GpuPowerProbe.cpp 读进来之后
           # 直接把 AegirPoster / KaleidoscopePoster 加进 NativeSandboxGrantProcess 名单。
           # 之前三次"外部 sed 源文件"都失败（文件在 defconfig / 第一次 build 之后都还不存在，
