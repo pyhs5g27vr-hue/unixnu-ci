@@ -138,9 +138,11 @@ jobs:
           open(sys.argv[2], 'w', encoding='utf-8', errors='surrogateescape').write(''.join(keep))
           print(sys.argv[1], 'blocks', len(parts), 'kept', len(keep))
           PY
+            # 968's UniXNU.diff holds no diff --git block at all (everything is in commits/): nothing to apply.
+            if ! grep -q '^diff --git ' "$RUNNER_TEMP/$n.diff"; then echo "$n: empty diff, skipped"; continue; fi
             git -C "$p" apply --whitespace=nowarn "$RUNNER_TEMP/$n.diff"; echo "applied $n in $p"
           done
-          cp -R "$K"/unixnu/files/. .
+          if [ -d "$K"/unixnu/files ]; then cp -R "$K"/unixnu/files/. .; fi   # 968 has no files/
           mkdir -p patches/xnu-10063-arm64e; cp "$K"/unixnu/patches/xnu-10063-arm64e/*.patch patches/xnu-10063-arm64e/
           git status --short | head -50
 
