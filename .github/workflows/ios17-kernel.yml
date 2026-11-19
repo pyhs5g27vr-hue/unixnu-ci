@@ -148,6 +148,9 @@ jobs:
           done
           if [ -d "$K"/unixnu/files ]; then cp -R "$K"/unixnu/files/. .; fi   # 968 has no files/
           mkdir -p patches/xnu-10063-arm64e; cp "$K"/unixnu/patches/xnu-10063-arm64e/*.patch patches/xnu-10063-arm64e/
+          # 968's zz-msg-probe adds an include xnu-10063.141.1 already has (ipc_kmsg.c:115): drop that hunk.
+          if [ -f patches/xnu-10063-arm64e/zz-msg-probe.patch ]; then
+            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" patches/xnu-10063-arm64e/zz-msg-probe.patch; fi
           git status --short | head -50
 
       - name: AdrenoMetal upstream merge
@@ -218,6 +221,9 @@ jobs:
           # PosterBoard's NSFileProtectionNone check failed and its data store was never created. fuxi-dataprot=0 turns it off.
           D=UniXNU/patches/xnu-10063-arm64e
           mkdir -p "$D"
+          # 2026-11-20: Kerfand 968 ships the same fix as zz-protection-class-none.patch (same hunks in kern_descrip.c and
+          # vfs_attrlist.c): both cannot apply, so ours stays out when it is there.
+          if [ -f "$D/zz-protection-class-none.patch" ]; then echo "Kerfand zz-protection-class-none.patch present: fuxi-dataprot-none skipped"; exit 0; fi
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-dataprot-none.patch" "$D/"
           grep -c fuxi_dataprot_none "$D/fuxi-dataprot-none.patch"
 
