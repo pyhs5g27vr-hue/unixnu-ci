@@ -104,7 +104,21 @@ jobs:
           done
           for d in "$K"/unixnu/commits/*/; do
             n=$(basename "$d"); [ "$n" = UniXNU ] || [ "$n" = device ] && continue
-            git -C "${n/_//}" am --keep-cr "$d"*.patch; echo "am $n"
+            # 2026-11-20: Kerfand 968+ keeps each driver's base in commits/<n>/HEAD.txt ("base <sha>"), not diffs/*.HEAD.txt.
+            # Without it the patches went onto the dec111b pins (Adreno740 a9a2cbb4 instead of 6fa7bae2) and did not apply.
+            # Some of those bases (AdrenoMetal 9c4f9e9) are not public, and Adreno740's patch needs local changes beyond its
+            # public base 6fa7bae (native_gop_handoff_call): a driver whose patches do not apply stays at its old pin.
+            p=${n/_//}; old=$(git -C "$p" rev-parse HEAD)
+            b=$(sed -n 's/^base \([0-9a-f]\{40\}\).*/\1/p' "$d/HEAD.txt" 2>/dev/null | head -1)
+            if [ -n "$b" ]; then
+              git -C "$p" fetch -q origin "$b" 2>/dev/null || true
+              git -C "$p" checkout -q "$b" 2>/dev/null && echo "$p: base $b" || echo "$p: base $b not public"
+            fi
+            if ls "$d"*.patch >/dev/null 2>&1; then
+              if git -C "$p" am --keep-cr "$d"*.patch; then echo "am $n"
+              else git -C "$p" am --abort || true; git -C "$p" checkout -q "$old"
+                echo "::warning::$n: Kerfand patches do not apply on a public base, $p kept at $(git -C "$p" log -1 --format=%h)"; fi
+            fi
           done
           # Diffs: drop submodule pointer hunks (the checkouts above already set them).
           for f in "$K"/unixnu/diffs/*.diff; do
