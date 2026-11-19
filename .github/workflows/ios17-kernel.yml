@@ -1252,6 +1252,9 @@ jobs:
           # port of 95789237 + 2a91aa1 (the stall handler leaves a GPU that is still moving alone, BR and BV both counted).
           git -C UniXNU/drivers/Adreno740 apply --check "$GITHUB_WORKSPACE/ci-self/.github/fuxi/a740-gpu-fixes.patch"
           git -C UniXNU/drivers/Adreno740 apply "$GITHUB_WORKSPACE/ci-self/.github/fuxi/a740-gpu-fixes.patch"
+          # fuxi 2026-11-19: hangCheck on a poisoned device asks for recover() (GPU restart) instead of failing every call for good.
+          git -C UniXNU/drivers/Adreno740 apply --check "$GITHUB_WORKSPACE/ci-self/.github/fuxi/a740-hang-recover.patch"
+          git -C UniXNU/drivers/Adreno740 apply "$GITHUB_WORKSPACE/ci-self/.github/fuxi/a740-hang-recover.patch"
           git -C UniXNU/drivers/Adreno740 diff --stat
           # Hardware watchdog: FuxiHwdt.inc.c appended to every BootWatchdogPolicy.c, started first thing in
           # sheng_boot_watchdog_policy (runs once, in thread context, before launchd).

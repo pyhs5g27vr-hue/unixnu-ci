@@ -1,0 +1,60 @@
+diff --git a/NativeAdrenoSubmit.cpp b/NativeAdrenoSubmit.cpp
+index 701dd75..befb29e 100644
+--- a/NativeAdrenoSubmit.cpp
++++ b/NativeAdrenoSubmit.cpp
+@@ -769,7 +769,13 @@ bool NativeAdrenoSubmit::madeProgress()
+ IOReturn NativeAdrenoSubmit::hangCheck(bool *hung)
+ {
+     if(!hung)return kIOReturnBadArgument;*hung=false;
+-    if(!attached_ || poisoned_)return kIOReturnNotReady;
++    if(!attached_)return kIOReturnNotReady;
++    /* fuxi: a poisoned device (fault, bad fence, failed ring write) is restarted by recover() instead of staying dead for good. */
++    if(poisoned_) {
++        if(poison_recoveries_>=PoisonRecoverMax)return kIOReturnNotReady;
++        ++poison_recoveries_;++stats_.hangs;*hung=true;
++        return kIOReturnSuccess;
++    }
+     /* The newest submission of either ring: each ring's fence numbers rise, so the later of the two is the device's newest. */
+     const uint32_t last0=ring(0)->lastSubmitted(),last1=preemption()?ring(1)->lastSubmitted():0;
+     const uint32_t last=(int32_t)(last1-last0)>0?last1:last0;
+@@ -792,8 +798,13 @@ IOReturn NativeAdrenoSubmit::hangCheck(bool *hung)
+     }
+     NativeAdrenoRing *const r=ringOfFence(last)?ringOfFence(last):ring(0);
+     uint32_t fence=0;
+-    if(r->observeFence(last,nullptr,0,&fence)==NativeAdrenoRingFencePoisoned)return poison();
+-    if(fence!=hang_fence_) {hang_fence_=fence;progress_retries_=0;return kIOReturnSuccess;}
++    if(r->observeFence(last,nullptr,0,&fence)==NativeAdrenoRingFencePoisoned) {
++        poison();
++        if(poison_recoveries_>=PoisonRecoverMax)return kIOReturnNotReady;
++        ++poison_recoveries_;++stats_.hangs;*hung=true;
++        return kIOReturnSuccess;
++    }
++    if(fence!=hang_fence_) {hang_fence_=fence;progress_retries_=0;poison_recoveries_=0;return kIOReturnSuccess;}
+     if(fence>=last || madeProgress())return kIOReturnSuccess;
+     progress_retries_=0;++stats_.hangs;*hung=true;
+     return kIOReturnSuccess;
+@@ -843,7 +854,9 @@ IOReturn NativeAdrenoSubmit::recover(NativeAdrenoRestart restart,void *cookie,co
+     } else {
+         const IOReturn fr=ring(0)->fenceValue(&fence);
+         native_adreno_recover_trace[2]=fence;native_adreno_recover_trace[3]=last;
+-        if(fr || fence>last) {native_adreno_recover_trace[0]=1;native_adreno_recover_trace[1]=uint32_t(fr);return poison();}
++        if(fr) {native_adreno_recover_trace[0]=1;native_adreno_recover_trace[1]=uint32_t(fr);return poison();}
++        /* fuxi: a fence word above the last submission is a corrupted fence page: restart from what the ring last trusted. */
++        if(fence>last) {native_adreno_recover_trace[0]=7;native_adreno_recover_trace[1]=fence;fence=ring(0)->completedFence();if(fence>last)fence=last;}
+         /* What already completed retires as usual. */
+         for(auto &job:jobs_)if(job.active && job.fence<=fence) {
+             IOReturn status=release(job);if(status)return status;
+diff --git a/NativeAdrenoSubmit.h b/NativeAdrenoSubmit.h
+index 987ae5b..b53bbf8 100644
+--- a/NativeAdrenoSubmit.h
++++ b/NativeAdrenoSubmit.h
+@@ -134,6 +134,9 @@ private:
+     NativeAdrenoSubmitStats stats_{};
+     void noteStall(uint32_t observed,const NativeAdrenoRingClock *clock);   /* the CP's state for a fence that stopped advancing (native_adreno_stall) */
+     bool attached_=false,poisoned_=false;
++    /* fuxi: recoveries hangCheck asked for on a poisoned device since the fence last moved (give up after PoisonRecoverMax). */
++    uint32_t poison_recoveries_=0;
++    static constexpr uint32_t PoisonRecoverMax=8;
+     uint32_t audit_tick_=0;   /* submissions since attach; every eighth one audits its IB lines */
+     /* submit()'s distinct buffers and ring words: too large for the kernel stack at 128 IBs (callers serialize every method) */
+     uint64_t scratch_handles_[NativeAdrenoSubmitMaxBuffers]{};
