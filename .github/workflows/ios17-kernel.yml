@@ -959,7 +959,11 @@ jobs:
           import sys
           p = sys.argv[1]; s = open(p).read()
           old = "allowed = {"
-          new = "allowed = {'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', "
+          # 968's build-fuxi-usb-debug.py patches QUD to call fuxi_control_touch (FuxiTouchProbe) too.
+          new = ("allowed = {'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', "
+                 "'_fuxi_control_touch', 'l_fuxi_control_touch.ptrauth', ")
+          if "'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', " in s and new not in s:
+              s = s.replace("allowed = {'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', ", "allowed = {", 1)
           if new not in s:
               assert s.count(old) == 1, (p, s.count(old))
               open(p, 'w').write(s.replace(old, new))
@@ -1786,8 +1790,10 @@ jobs:
           # the autotune sends to system memory were right, hence the flashing. Applies after turnip-gmem-mutable-swap.patch (in the base).
           GS=patches/mesa/turnip-gmem-memory-side-swap.patch
           # Upstream's hunks name tu_note_gmem_side(cmd, iview, ...); our base has tu_note_gmem_side(1, ...), so use the adapted copy.
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/turnip-gmem-memory-side-swap-base.patch" "$GS" \
-            && echo "gmem memory-side swap (base): $(wc -c < "$GS") bytes" || echo "WARN: no adapted $GS" >&2
+          # 968+ ships upstream's own copy (fitting its base): keep it, the adapted one only fits the 53f base.
+          if [ -f "$GS" ]; then echo "gmem memory-side swap already in the tree: $(wc -c < "$GS") bytes"
+          else cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/turnip-gmem-memory-side-swap-base.patch" "$GS" \
+            && echo "gmem memory-side swap (base): $(wc -c < "$GS") bytes" || echo "WARN: no adapted $GS" >&2; fi
           python3 - scripts/data/adreno-compiler-inputs.json "$GS" <<'PY'
           import json, sys
           from pathlib import Path

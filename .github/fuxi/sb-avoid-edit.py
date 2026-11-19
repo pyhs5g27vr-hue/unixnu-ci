@@ -83,6 +83,9 @@ for p in sys.argv[1:]:
     s = open(p).read()
     if 'fsbNeedsUpdate' in s:
         print(p, 'already patched'); continue
+    if 'static void fsbBeacon(' in s:
+        # Kerfand 968+ ships its own beacons in FuxiStatusBar.c: a second fsbBeacon would be a redefinition.
+        print(p, 'has its own fsbBeacon (Kerfand 968+): left alone'); continue
     for a in (INC, A1, A2, A3, A4):
         assert s.count(a) == 1, (p, a)
     s = s.replace(INC, INC + INC_ADD, 1).replace(A1, A1 + BLOCK).replace(A2, A2 + A2_ADD).replace(A3, A3 + A3_ADD).replace(A4, A4 + A4_ADD)
