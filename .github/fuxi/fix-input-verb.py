@@ -27,25 +27,25 @@ def fix(p):
                  "    if (bytes == 5u && text[0] == 'I' && text[1] == 'N' && text[2] == 'P' && text[3] == 'U' && text[4] == 'T')\n"
                  "        return SXNU_CONTROL_VERB_INPUT;\n") + t[i:]
     # 1b) parse: arguments between the verb and the CRC
-    old = '    if (verb == SXNU_CONTROL_VERB_INVALID) return 0;\n    cursor++;\n    crc_start = cursor;\n'
+    # Anchor shared by the plain QUD source and the CI tree after usb-touch-inject.patch (which puts the TAP/SWP block
+    # after this cursor++). Inserted right after it: cursor starts at the first INPUT argument and ends at the CRC.
+    old = '    if (verb == SXNU_CONTROL_VERB_INVALID) return 0;\n    cursor++;\n'
     if t.count(old) != 1: print(p, ': parse anchor count', t.count(old), file=sys.stderr); return False
-    t = t.replace(old,
-        '    if (verb == SXNU_CONTROL_VERB_INVALID) return 0;\n'
+    t = t.replace(old, old +
         '    frame->input_op = frame->input_a = frame->input_b = 0;\n'
         '    if (verb == SXNU_CONTROL_VERB_INPUT) {\n'
         '        static const size_t width[3] = {2u, 4u, 4u};\n'
         '        uint32_t value[3] = {0, 0, 0};\n'
         '        for (unsigned k = 0; k < 3u; ++k) {\n'
         '            uint64_t v = 0;\n'
-        '            if (cursor >= bytes || p[cursor] != (uint8_t)\' \') return 0;\n'
-        '            cursor++;\n'
-        '            if (bytes - cursor < width[k] || !sxnu_control_parse_hex(p + cursor, width[k], &v)) return 0;\n'
+        '            if (cursor > bytes || bytes - cursor < width[k] + 1u) return 0;\n'
+        '            if (!sxnu_control_parse_hex(p + cursor, width[k], &v)) return 0;\n'
         '            cursor += width[k]; value[k] = (uint32_t)v;\n'
+        '            if (p[cursor] != (uint8_t)\' \') return 0;\n'
+        '            cursor++;\n'
         '        }\n'
-        '        if (cursor >= bytes || p[cursor] != (uint8_t)\' \') return 0;\n'
         '        frame->input_op = value[0]; frame->input_a = value[1]; frame->input_b = value[2];\n'
-        '    }\n'
-        '    cursor++;\n    crc_start = cursor;\n', 1)
+        '    }\n', 1)
     # 2) accept / commit range
     n0 = t
     t = re.sub(r'frame->verb > (SXNU_CONTROL_VERB_\w+)\)', r'(frame->verb > \1 && frame->verb != SXNU_CONTROL_VERB_INPUT))', t)
