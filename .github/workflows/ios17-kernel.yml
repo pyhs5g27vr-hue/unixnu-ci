@@ -119,7 +119,11 @@ jobs:
               else git -C "$p" am --abort || true; git -C "$p" checkout -q "$old"
                 echo "::warning::$n: Kerfand patches do not apply on a public base, $p kept at $(git -C "$p" log -1 --format=%h)"; fi
             fi
+            # Record what is checked out as the superproject's pin: 968's UniXNU patch points AdrenoMetal at Kerfand's local
+            # 436c609, and the build's submodule update then fails fetching it ("not our ref").
+            git add "$p"
           done
+          git -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: submodule pins as checked out" || true
           # Diffs: drop submodule pointer hunks (the checkouts above already set them).
           for f in "$K"/unixnu/diffs/*.diff; do
             n=$(basename "$f" .diff); p=.; [ "$n" = UniXNU ] || p=${n/_//}
