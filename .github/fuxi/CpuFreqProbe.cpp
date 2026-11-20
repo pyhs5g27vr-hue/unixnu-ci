@@ -32,9 +32,10 @@
 // never left 2803 MHz (99 % busy), so both are gone; a touch still holds the P domains at the top.
 // Throttle count: in a window where a domain's busiest CPU was at least half busy, its domain state (the frequency the hardware
 // runs, which also drops while the whole cluster idles) under 80 % of the vote counts as a throttled window, with the lowest seen.
-#include <IOKit/IOService.h>
-#include <IOKit/IOLib.h>
-#include <IOKit/IOMemoryDescriptor.h>
+/* fuxi: registers are reached through ml_io_map (XNU's C mapping helper) instead of IODeviceMemory, so this
+ * file needs no IOKit header at all — the compile record BootProgress.c uses carries none. */
+#include <machine/machine_routines.h>
+#include <kern/locks.h>
 #include <pexpert/pexpert.h>
 #include <kern/thread.h>
 #include <mach/mach_time.h>
@@ -73,7 +74,7 @@ constexpr uint32_t kXoKHz = 19200;        // bi_tcxo_div2
 constexpr uint32_t kGpllHalfKHz = 300000; // GPLL0 600 MHz / CLK_HW_DIV 2
 
 struct Window {
-    IOMemoryMap *map;
+    /* fuxi: no IOMemoryMap; ml_io_map answers the virtual address directly. */
     uintptr_t va;
     int voted;          // level written, -1 none
     uint32_t votedKHz;
@@ -82,7 +83,10 @@ struct Window {
 Window gDomain[3], gL3;
 unsigned gMode;
 uint32_t gCapKHz;
-IOLock *gLock;
+lck_mtx_t *gLock;      /* fuxi: IOLock -> lck_mtx (no IOKit in this file) */
+static lck_grp_t *gLockGrp;
+static lck_grp_attr_t *gLockGrpAttr;
+static lck_attr_t *gLockAttr;
 
 uint32_t rd32(uintptr_t base, uint32_t reg) {return *reinterpret_cast<volatile uint32_t *>(base + reg);}
 void wr32(uintptr_t base, uint32_t reg, uint32_t value) {
@@ -110,10 +114,9 @@ int pickLevel(uintptr_t va, bool turboMatters, uint32_t *khzOut, unsigned *rowsO
 }
 
 bool mapWindow(Window &w, uint64_t base) {
-    IODeviceMemory *memory = IODeviceMemory::withRange(base, kWindowSize);
-    w.map = memory ? memory->map(kIOMapAnywhere | kIOMapInhibitCache) : nullptr;
-    if (memory) memory->release();
-    w.va = w.map ? static_cast<uintptr_t>(w.map->getVirtualAddress()) : 0;
+    /* fuxi: ml_io_map is uncached on arm64, which is what kIOMapInhibitCache asked for, and it takes the
+     * physical address directly (the windows are fixed at 0x17d9x000 in the DT). */
+    w.va = static_cast<uintptr_t>(ml_io_map(base, kWindowSize));
     w.voted = -1;
     return w.va != 0;
 }
@@ -217,7 +220,7 @@ void governorThread(void *, wait_result_t) {
     uint64_t winNs = 0, khzNs[3] = {}, busyNs[3] = {};
     uint32_t changes[3] = {};
     for (;;) {
-        IOSleep(16);
+        delay_for_interval(16, 1000);
         const uint64_t t = mach_absolute_time(), dt = t - lastT;
         lastT = t;
         if (!dt) continue;
@@ -249,7 +252,7 @@ void governorThread(void *, wait_result_t) {
         uint64_t ns = 0;
         absolutetime_to_nanoseconds(dt, &ns);
         winNs += ns;
-        IOLockLock(gLock);
+        lck_mtx_lock(gLock);
         for (unsigned d = 0; d < 3; ++d) {
             Window &w = gDomain[d];
             if (!w.va || !(rd32(w.va, kRegEnable) & 1)) continue;
@@ -295,7 +298,7 @@ void governorThread(void *, wait_result_t) {
             khzNs[d] += (uint64_t)l.khz[cur[d]] / 1000 * ns;
             busyNs[d] += busy[d] * ns / 10;
         }
-        IOLockUnlock(gLock);
+        lck_mtx_unlock(gLock);
         if (winNs >= 10000000000ull) {
             for (unsigned d = 0; d < 3; ++d) {
                 native_cpufreq_gov[d * 3] = changes[d];
@@ -311,7 +314,7 @@ void governorThread(void *, wait_result_t) {
 
 extern "C" void sheng_cpufreq_poll(void) {
     if (!gMode || !gLock) return;
-    IOLockLock(gLock);
+    lck_mtx_lock(gLock);
     for (unsigned d = 0; d < 3; ++d) {
         Window &w = gDomain[d];
         bool wanted = gMode == 3 || (gMode == 2 && d == 0);
@@ -320,7 +323,7 @@ extern "C" void sheng_cpufreq_poll(void) {
     if (gL3.va && gMode >= 3 && gL3.voted < 0 && (rd32(gL3.va, kRegEnable) & 1)) voteL3();
     refreshRow();
     native_cpufreq_stage = 2;
-    IOLockUnlock(gLock);
+    lck_mtx_unlock(gLock);
 }
 
 extern "C" void sheng_cpufreq_probe(void) {
@@ -336,7 +339,11 @@ extern "C" void sheng_cpufreq_probe(void) {
     gFramePct = framePct > 100 ? 100 : framePct;
     gFloorKHz = minMHz * 1000;
     if (!mode || gLock) return;
-    gLock = IOLockAlloc();
+    /* fuxi: lck_mtx in place of IOLockAlloc. */
+    if (!gLockGrpAttr) gLockGrpAttr = lck_grp_attr_alloc_init();
+    if (!gLockGrp) gLockGrp = lck_grp_alloc_init("fuxi-cpufreq", gLockGrpAttr);
+    if (!gLockAttr) gLockAttr = lck_attr_alloc_init();
+    if (!gLock && gLockGrp && gLockAttr) gLock = lck_mtx_alloc_init(gLockGrp, gLockAttr);
     if (!gLock) return;
     native_cpufreq_stage = 1;
     gCapKHz = capMHz * 1000;
