@@ -1588,6 +1588,10 @@ jobs:
           else echo "this base does not build WiFi into the display archive"; fi
           if grep -rqs 'QcaBluetooth' device/ios17/overlay/scripts/build-ios17-legacy-display.py device-ios17/scripts/build-ios17-legacy-display.py; then
             fill UniXNU/drivers/QcaBluetooth UniXNU/QcaBluetooth 22ff97f93416 include/qbt.h
+            # radio B1 (44730227462): qbt_linux.c needs out/linux/btqca.h. The driver stages btqca.c/.h from its locked Linux revision
+            # (ianchb/sm8550-mainline 1fb56e6, sha256-checked) with tools/prepare-linux.py (README: run it before building).
+            for i in 1 2 3; do (cd UniXNU/drivers/QcaBluetooth && python3 tools/prepare-linux.py) && break; sleep 20; done
+            ls UniXNU/drivers/QcaBluetooth/out/linux/btqca.h UniXNU/drivers/QcaBluetooth/out/linux/btqca.c
           else echo "this base does not build Bluetooth into the display archive"; fi
 
       - name: Patch FuxiTouchProbe (fuxi_control_touch + keep native_touch_set_sink alive)
