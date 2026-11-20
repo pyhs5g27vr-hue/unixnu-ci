@@ -40,6 +40,10 @@
 #include <pexpert/pexpert.h>
 #include <kern/thread.h>
 #include <mach/mach_time.h>
+/* fuxi (968 B16: "use of undeclared identifier 'ml_io_map'" / 'snprintf' in archive-22): the compile record this file is
+ * built with exports neither declaration; same prototypes as osfmk/arm/machine_routines.h and libkern/libkern.h. */
+extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+extern "C" int snprintf(char *, size_t, const char *, ...) __attribute__((format(printf, 3, 4)));
 
 extern "C" {
 char native_cpufreq_row[120];
