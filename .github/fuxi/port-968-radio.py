@@ -74,7 +74,33 @@ CPUFREQ = ("ROOT / 'kits/sheng/FuxiWifiNet.cpp',\n"
            "            ROOT / 'kits/sheng/CpuFreqProbe.cpp', ROOT / 'kits/sheng/FuxiCpuFreqLog.cpp'):\n")
 assert block.count(CPUFREQ) == 1, '968 Wi-Fi source list changed'
 block = block.replace(CPUFREQ, "ROOT / 'kits/sheng/FuxiWifiNet.cpp'):\n"
-                      "            # (968a7c6 also builds CpuFreqProbe.cpp + FuxiCpuFreqLog.cpp here; on this tree cpufreq-ios17-build.py does)\n", 1)
+                      "            # (968a7c6 also builds its CPU frequency sources here; on this tree cpufreq-ios17-build.py does. Do not name\n"
+                      "            # them in this comment: that script skips a build script that already mentions them, radio B3 44742904127)\n", 1)
+# radio B3: 968a7c6's BatteryProbe.cpp logs four counters of its ArmCpu submodule patch (not on the public ArmCpu base). They are
+# weak imports, but the static kernel link still wants a definition: FuxiRadioStubs.c defines them as plain zero counters.
+C_LIST = "'ShengGpr.c', 'ShengAudioReach.c', 'FuxiCs35l41.c', 'FuxiAudioRt.c', 'ShengBattmgr.c'):"
+assert block.count(C_LIST) == 1, '968 ADSP C list changed'
+block = block.replace(C_LIST, C_LIST[:-2] + ", 'FuxiRadioStubs.c'):", 1)
+(dev / 'package' / 'FuxiRadioStubs.c').write_text(
+    '// fuxi radio port (2026-11-20): the counters 968a7c6 BatteryProbe.cpp prints ("fuxi sgi:"), which Kerfand\'s ArmCpu submodule\n'
+    '// patch defines; that patch needs a non-public ArmCpu base, so here they exist and stay 0.\n'
+    '#include <stdint.h>\n'
+    'volatile uint64_t armcpu_sgi_unexpected;\n'
+    'volatile uint32_t armcpu_sgi_unexpected_id, armcpu_sgi_unexpected_core, armcpu_sgi_unexpected_mask;\n')
+
+# radio B3: FuxiAdspFirmware.cpp (ADSP firmware from modem_a) and FuxiWifiFwPart.cpp call native_ufs_part_find/read, which 968a7c6's
+# NativeUfs.cpp adds at its end (80 lines, the rest of the file is the 53f one byte for byte). Append that part verbatim.
+ufs968 = get('device/drivers/NativeUfs/NativeUfs.cpp').decode()
+PART = '// ---- Read-only access to named partitions'
+tail = ufs968[ufs968.index(PART):]
+u = 0
+for p in real_files('NativeUfs.cpp'):
+    s = Path(p).read_text()
+    if 'native_ufs_part_find' in s:
+        print('NativeUfs already has the partition reader', p); u += 1; continue
+    Path(p).write_text(s.rstrip('\n') + '\n\n\n' + tail); u += 1
+    print('NativeUfs: 968a7c6 partition reader appended', p)
+assert u >= 1, 'no NativeUfs.cpp'
 ar968 = '*backlight_objs, *wifi_objs, *adsp_objs, OUT'
 assert ar968 in src968, '968 archive line'
 n = 0
