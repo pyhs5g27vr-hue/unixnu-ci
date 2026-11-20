@@ -1973,6 +1973,10 @@ jobs:
         working-directory: UniXNU
         run: |
           cd out-ios17/fuxi/tree
+          # 2026-11-20 搬家清单 6（壁纸页）：supportsExtendedXR10Formats 换成作者 11-17 插件那一行（PosterBoard 放行），
+          # DeepSeek metal-xr10-posterboard.py，原文取自 up/AdrenoMetal/NativeBridgeMetalFrontend.mm:5178。
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metal-xr10-posterboard.py" drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm || echo "::warning::xr10 posterboard not applied"
+          grep -c 'fuxi-xr10-posterboard' drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm || true
           # FuxiScanoutScaleAir.c 本应由第 18 步的 AdrenoMetal.patch 创建，但那个 patch
           # 只要有一个文件 apply --check 失败就整块 skip，于是这个 .c 缺失；
           # 而 build-adreno-metal-plugin.py 既要编译它、又要在链接时引用它的 .o，
