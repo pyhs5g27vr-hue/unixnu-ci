@@ -1555,6 +1555,11 @@ jobs:
           }
           if grep -rqs 'Ath12kWifiLegacy' device/ios17/overlay/scripts/build-ios17-legacy-display.py device-ios17/scripts/build-ios17-legacy-display.py; then
             fill device/drivers/Ath12kWifiLegacy UniXNU/Ath12kWifi f6bf561f92cc include/nw_abi.h
+            # B10: tools/prepare.sh links deps/linux (v7.0.14 sparse) and deps/freebsd, which the repository never carries
+            # ("deps/linux/.../boot.c: No such file", archive-22 failed, then every display/USB/touch symbol was undefined).
+            # The driver's own tools/fetch-sources.sh fetches both (README: run it before building).
+            for i in 1 2 3; do bash device/drivers/Ath12kWifiLegacy/tools/fetch-sources.sh && break; rm -rf device/drivers/Ath12kWifiLegacy/deps; sleep 20; done
+            ls device/drivers/Ath12kWifiLegacy/deps/linux/drivers/bus/mhi/host/boot.c device/drivers/Ath12kWifiLegacy/deps/linux/drivers/net/wireless/ath/ath12k/dp.h
           else echo "this base does not build WiFi into the display archive"; fi
           if grep -rqs 'QcaBluetooth' device/ios17/overlay/scripts/build-ios17-legacy-display.py device-ios17/scripts/build-ios17-legacy-display.py; then
             fill UniXNU/drivers/QcaBluetooth UniXNU/QcaBluetooth 22ff97f93416 include/qbt.h
