@@ -160,7 +160,7 @@ if cpufreq_source.exists():
         print('   built CpuFreqProbe.o')
     except subprocess.CalledProcessError as _e:
         _err = (_e.stderr or _e.output or '') or ''
-        _tail = [l for l in _err.split('\n') if l.strip()][-12:]
+        _tail = [l for l in _err.splitlines() if l.strip()][-12:]
         print('   ::warning::CpuFreqProbe.o did not compile (rc=%s); sheng-cpufreq is absent from this kernel' % _e.returncode)
         for _l in _tail:
             print('   ::warning::  %s' % _l.strip()[:300])

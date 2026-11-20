@@ -36,6 +36,7 @@
  * file needs no IOKit header at all — the compile record BootProgress.c uses carries none. */
 #include <machine/machine_routines.h>
 #include <kern/locks.h>
+#include <kern/clock.h>     /* delay_for_interval, for the 16 ms governor tick */
 #include <pexpert/pexpert.h>
 #include <kern/thread.h>
 #include <mach/mach_time.h>
