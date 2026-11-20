@@ -111,6 +111,12 @@ def stubs(s):
     if '__attribute__((weak)) int native_gop_handoff_call' in s: return None
     s = once(s, "handoff_stubs = '''int native_gop_handoff_call(", "handoff_stubs = '''__attribute__((weak)) int native_gop_handoff_call(", 'handoff call')
     s = once(s, 'void *native_gop_handoff_memory(void) { return 0; }', '__attribute__((weak)) void *native_gop_handoff_memory(void) { return 0; }', 'handoff memory')
+    # 82e's GopFramebuffer diff also registers a GOP USB screenshot with Kerfand's own QUD; ours has no
+    # qcom_usb_debug_set_screenshot_storage (run 44756548289 link error). A weak 0 makes usbShotRegister give up.
+    s = once(s, '__attribute__((weak)) void native_touch_probe(void) {}\n',
+             '__attribute__((weak)) void native_touch_probe(void) {}\n'
+             '__attribute__((weak)) int qcom_usb_debug_set_screenshot_storage(void *storage, unsigned long bytes) { (void)storage; (void)bytes; return 0; }\n',
+             'screenshot storage')
     return once(s, "'volatile int32_t native_touch_extent[4];', 'volatile uint32_t native_touch_edge_stats[4];'):",
         "'volatile int32_t native_touch_extent[4];', 'volatile uint32_t native_touch_edge_stats[4];',\n"
         "                 # NativeGOPPresenter.cpp (the GPU scanout hand-off, sheng-fb-gpu=1) defines its wait counters.\n"
