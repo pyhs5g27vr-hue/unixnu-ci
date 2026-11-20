@@ -966,7 +966,8 @@ jobs:
           old = "allowed = {"
           # 968's build-fuxi-usb-debug.py patches QUD to call fuxi_control_touch (FuxiTouchProbe) too.
           new = ("allowed = {'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', "
-                 "'_fuxi_control_touch', 'l_fuxi_control_touch.ptrauth', ")
+                 "'_fuxi_control_touch', 'l_fuxi_control_touch.ptrauth', "
+                 "'_fuxi_gpu_inject_hang', 'l_fuxi_gpu_inject_hang.ptrauth', ")
           if "'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', " in s and new not in s:
               s = s.replace("allowed = {'_fuxi_touch_inject', 'l_fuxi_touch_inject.ptrauth', ", "allowed = {", 1)
           if new not in s:
@@ -1629,6 +1630,9 @@ jobs:
           # 2026-11-20: the wire half add-input-verb.py missed (5-byte verb + arguments before the CRC, accept/commit range, reply name).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fix-input-verb.py" device device-ios17
           grep -c 'return "INPUT";' device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h
+          # 2026-11-20: GPUHANG test as "INPUT 47 0000 0000" -> fuxi_gpu_inject_hang (a740-stall-hang.patch).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/gpuhang-verb.py" device device-ios17
+          grep -c fuxi-gpuhang-20261120 device/drivers/QcomXnuUsbDebug/kernel/QcomXnuUsbDebug.c
           # 2026-11-20: home / switcher gestures (53f disabled NativeHidInput's edge hook; Kerfand 82e/968 turned it back on).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" device device-ios17 || echo "::warning::edge hook source not found before the kernel step"
 
