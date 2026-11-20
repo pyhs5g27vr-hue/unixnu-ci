@@ -34,6 +34,10 @@ on:
         description: GPU direct scanout port (NativeUfs display bank window, probe stubs dropped, df4a905 fence wait)
         type: boolean
         default: false
+      fuxi_radio:
+        description: Kerfand 968a7c6 Wi-Fi, Bluetooth, ADSP audio + battery onto 53f (port-968-radio.py)
+        type: boolean
+        default: false
       runner:
         description: macOS runner label
         required: true
@@ -1534,6 +1538,11 @@ jobs:
           set -e
           # The ADSP battery manager as an IOPMPowerSource (UniXNU docs/devices/fuxi.md, Power; needs sheng-adsp=2 at boot).
           # The CI base 53f1320c has no ADSP stack: bring Kerfand 82e4615's (no audio) first (adsp-port.py, fuxi 2026-11-16).
+          # 2026-11-20 (fuxi_radio): the author's 968a7c6 Wi-Fi, Bluetooth and ADSP/audio/battery, verbatim; adsp-port.py then has nothing to do.
+          if [ "${{ inputs.fuxi_radio }}" = "true" ]; then
+            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-968-radio.py" device device-ios17 UniXNU/patches/xnu-10063-arm64e
+            export FUXI_968_ADSP=1
+          fi
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/adsp-port.py" device device-ios17
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/battery-port.py" device device-ios17
           grep -rn 'sheng_battery_probe();' device device-ios17 --include=Ios17LegacyDisplayProbe.cpp || echo 'no battery probe: this base has no ADSP stack'

@@ -47,7 +47,11 @@ def fixup(name, data):
 # of it (run 43792318691: no sheng_adsp_probe in the late probe), so on such a tree only the poster grant below is applied.
 HAVE_ADSP = bool(real_files('AdspProbe.cpp')) and any('sheng_adsp_probe();' in Path(p).read_text() for p in real_files('Ios17LegacyDisplayProbe.cpp'))
 print('ADSP stack present:', HAVE_ADSP)
-for name, want in (FILES.items() if HAVE_ADSP else ()):
+# 2026-11-20: with port-968-radio.py (FUXI_968_ADSP=1) the author's 968a7c6 battery files are already in place; keep them.
+import os
+KEEP_968 = os.environ.get('FUXI_968_ADSP') == '1'
+print('keeping the 968a7c6 battery files' if KEEP_968 else 'fetching the matejkoo battery files')
+for name, want in (FILES.items() if HAVE_ADSP and not KEEP_968 else ()):
     url = f'https://raw.githubusercontent.com/matejkoo217/UniXNU-fuxi/{COMMIT}/package/{name}'
     data = urllib.request.urlopen(url, timeout=60).read()
     got = hashlib.sha256(data).hexdigest()
