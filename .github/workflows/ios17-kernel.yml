@@ -1031,6 +1031,12 @@ jobs:
           done
           test $n -ge 1
 
+      - name: rstfix (failed bootloader flag -> plain reset)
+        run: |
+          # 2026-11-20: 53f sbfix-nodylib kept REBOOT-FASTBOOT pending for minutes (poisoned session, as f629 on 11-14).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/rstfix-qud.py" device/scripts/build-fuxi-usb-debug.py \
+            device-ios17/scripts/build-fuxi-usb-debug.py device/ios17/overlay/scripts/build-fuxi-usb-debug.py
+
       - name: skip the QUD host model test
         run: |
           # QcomXnuUsbDebug's tests/check.py (host models: buffer, transport, PNG) trips one assertion on this runner
