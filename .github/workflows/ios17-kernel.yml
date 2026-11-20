@@ -1661,6 +1661,22 @@ jobs:
           # 2026-11-20: home / switcher gestures (53f disabled NativeHidInput's edge hook; Kerfand 82e/968 turned it back on).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" device device-ios17 || echo "::warning::edge hook source not found before the kernel step"
 
+      - name: 968 native __DATA budget (USB log ring 32 -> 16 KiB, 2026-11-20)
+        run: |
+          # 968 B17/B18 (44702072778): "Native __DATA overlaps a retained segment: 0xfffffff00a274000-0xfffffff00a3e8000 size 0x174000,
+          # free before first overlap 0x171070, over by 0x2f90". The WiFi/BT/audio line has 12 KiB too much __DATA. Kerfand's own
+          # build-fuxi-usb-debug.py already shrinks the USB log ring 4 MiB -> 32 KiB for the iOS fileset (_usb_log_bytes, 0x8000);
+          # 16 KiB gives the page back. Only where build-ios17-legacy-display.py links Ath12kWifiLegacy (the 968 line).
+          if ! grep -rqs 'Ath12kWifiLegacy' device-ios17/scripts/build-ios17-legacy-display.py; then echo "not the 968 line: unchanged"; exit 0; fi
+          n=0
+          for f in $(find device device-ios17 -name build-fuxi-usb-debug.py -type f); do
+            if grep -q "'#define SOC_USB_LOG_BUFFER_BYTES (32u \* 1024u)'" "$f"; then
+              sed -i.bak "s/'#define SOC_USB_LOG_BUFFER_BYTES (32u \* 1024u)'/'#define SOC_USB_LOG_BUFFER_BYTES (16u * 1024u)'/" "$f"; rm -f "$f.bak"
+              grep -n 'SOC_USB_LOG_BUFFER_BYTES (16u' "$f"; n=$((n+1))
+            fi
+          done
+          echo "usb log ring 16 KiB in $n script(s)"; test $n -ge 1
+
       - name: fuxi CPU frequency control (sheng-cpufreq, ported from the author 968 kernel)
         if: ${{ !cancelled() && inputs.build_kernel }}
         run: |
