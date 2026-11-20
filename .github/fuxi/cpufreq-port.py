@@ -121,7 +121,9 @@ if cpufreq_source.exists():
                     '-I', str(ROOT / '.cache/xnu-work/libkern'),
                     '-I', str(ROOT / '.cache/xnu-work/pexpert'),
                     '-I', str(ROOT / 'kits/sheng')]
-        subprocess.run(command, cwd=record['directory'], check=True, timeout=180)
+        _r = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True, timeout=180)
+        if _r.returncode != 0:
+            raise subprocess.CalledProcessError(_r.returncode, command, _r.stdout, _r.stderr)
         return destination
     # fuxi: a C++ probe that does not compile must not cost the whole kernel build. Report and carry on.
     # The IOKit headers live wherever the XNU tree put them; print what is actually there so the next
@@ -141,7 +143,14 @@ if cpufreq_source.exists():
         cpufreq_obj = compile_cxx_like(policy_record, cpufreq_source, OUT / 'CpuFreqProbe.o')
         print('   built CpuFreqProbe.o')
     except subprocess.CalledProcessError as _e:
-        print('   ::warning::CpuFreqProbe.o did not compile (rc=%s): sheng-cpufreq is absent from this kernel' % _e.returncode)
+        _err = (_e.stderr or _e.output or '') or ''
+        _tail = [l for l in _err.split('\n') if l.strip()][-12:]
+        print('   ::warning::CpuFreqProbe.o did not compile (rc=%s); sheng-cpufreq is absent from this kernel' % _e.returncode)
+        for _l in _tail:
+            print('   ::warning::  %s' % _l.strip()[:300])
+        print('   --- full stderr tail ---')
+        for _l in _tail:
+            print('   %s' % _l.strip()[:400])
         cpufreq_obj = None
     except Exception as _e:
         print('   ::warning::CpuFreqProbe.o did not compile: %s' % _e)
