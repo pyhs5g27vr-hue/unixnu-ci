@@ -113,14 +113,30 @@ if cpufreq_source.exists():
                 command.append(value)
             index += 1
         command += ['-DXNU_BOOT_PROGRESS=1']
-        command += ['-xc++', '-std=gnu++17', '-fno-exceptions', '-fno-rtti',
-                    '-I', str(ROOT / '.cache/xnu-work/iokit'),
-                    '-I', str(ROOT / '.cache/xnu-work/iokit/IOKit'),
-                    '-I', str(ROOT / '.cache/xnu-work/osfmk'),
-                    '-I', str(ROOT / '.cache/xnu-work/bsd'),
-                    '-I', str(ROOT / '.cache/xnu-work/libkern'),
-                    '-I', str(ROOT / '.cache/xnu-work/pexpert'),
-                    '-I', str(ROOT / 'kits/sheng')]
+        # The record's own -I list already names the XNU include roots (osfmk, bsd, libkern, ...). BootProgress.c
+        # never includes IOKit, so 'iokit' is not among them; derive the tree root from whichever *osfmk entry the
+        # record carries and add <root>/iokit, which is what XNU's own makefiles put on the line for <IOKit/...>.
+        xnu_root = None
+        for _i, _a in enumerate(command):
+            if _a == '-I' and _i + 1 < len(command):
+                _p = command[_i + 1]
+                if _p.endswith('/osfmk'):
+                    xnu_root = _p[: -len('/osfmk')]
+                    break
+        extra_incs = []
+        if xnu_root:
+            for _sub in ('iokit', ''):
+                _cand = xnu_root + ('/' + _sub if _sub else '')
+                if _cand not in command:
+                    extra_incs += ['-I', _cand]
+            print('   [diag] xnu root from record: %s' % xnu_root)
+        else:
+            print('   [diag] no .../osfmk in the record: IOKit include path unknown')
+            for _i, _a in enumerate(command):
+                if _a == '-I' and _i + 1 < len(command):
+                    print('   [diag] -I %s' % command[_i + 1])
+        command += ['-xc++', '-std=gnu++17', '-fno-exceptions', '-fno-rtti'] + extra_incs + [
+            '-I', str(ROOT / 'kits/sheng')]
         _r = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True, timeout=180)
         if _r.returncode != 0:
             raise subprocess.CalledProcessError(_r.returncode, command, _r.stdout, _r.stderr)
