@@ -356,6 +356,11 @@ jobs:
           static const struct sheng_skel_entry sheng_skel_21h16[] = {
            {"/private/var/db", 0755, 0, 0, 0, 0, 0},
           };
+          /* Kerfand 968's BootWatchdogPolicy.c reads the entries through these (the generated table packs its strings). */
+          #ifndef SKEL_PATH
+          #define SKEL_PATH(e) ((e)->path)
+          #define SKEL_DATA(e) ((e)->data)
+          #endif
           H
           fi
           ls -la device-ios17 | head -20
