@@ -1527,6 +1527,10 @@ jobs:
           if git -C UniXNU/drivers/GopFramebuffer apply --check "$F" 2>/dev/null; then git -C UniXNU/drivers/GopFramebuffer apply "$F"; echo "applied df4a905 port"
           else echo "::warning::df4a905 port did not apply (base left as it is)"; git -C UniXNU/drivers/GopFramebuffer apply --check -v "$F" || true; fi
           grep -n 'native_ufs_dpu_state' UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp | head -3
+          # boot-ci-dpu: window live (state 0x80000003) but direct 0. startDirect ran once from start(), possibly before NativeUfs opened
+          # the window: retry it from the swap path and say on serial why it stays off. (With offline-legacy-logical-* set, gScaled
+          # also keeps the direct path off: the panel cannot scan a 1179x2556 surface without the pipe's scaler.)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/dpu-direct-late.py" UniXNU/drivers/GopFramebuffer/NativeLegacyDisplay.cpp
 
       - name: fuxi WiFi and Bluetooth module sources (Kerfand 968a7c6 builds them; its repository carries only their READMEs)
         if: ${{ inputs.build_kernel }}
