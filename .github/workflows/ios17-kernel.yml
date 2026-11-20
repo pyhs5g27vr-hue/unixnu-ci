@@ -1712,6 +1712,8 @@ jobs:
 
 
           T="$PWD/out-ios17/fuxi/tree"
+          # 968 B13: "Native __DATA overlaps a retained segment" with no sizes; print the placement before that check.
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/xnuprelink-diag.py" kits/XnuPrelink/fileset_layout.py || true
           REF="$T/build/xnu/fileset-reference/mach.release.bcm2837.unstripped.noctf"
           # The prelink step matches against a symbol-bearing RELEASE (LTO) comparison kernel built from the same xnu
           # tree (Kerfand builds it once and reuses it). First pass: assemble the tree and build everything up to the
