@@ -1638,6 +1638,10 @@ jobs:
           # 2026-11-20: GPUHANG test as "INPUT 47 0000 0000" -> fuxi_gpu_inject_hang (a740-stall-hang.patch).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/gpuhang-verb.py" device device-ios17
           grep -c fuxi-gpuhang-20261120 device/drivers/QcomXnuUsbDebug/kernel/QcomXnuUsbDebug.c
+          # 2026-11-20: boot-ci-usb2 GPUHANG: 45 hangs detected, 0 recover. Nothing called native_adreno_set_restart, so the hangcheck
+          # thread never ran recover(). gpuRestart (matejkoo217/UniXNU-fuxi b76a167) installed before the GPU service is published.
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/gpu-restart-port.py" device device-ios17 || echo "::warning::GPU restart hook NOT installed"
+          grep -rn 'native_adreno_set_restart(gpuRestart' device device-ios17 --include=GpuPowerProbe.cpp || true
           # 2026-11-20: home / switcher gestures (53f disabled NativeHidInput's edge hook; Kerfand 82e/968 turned it back on).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" device device-ios17 || echo "::warning::edge hook source not found before the kernel step"
 
