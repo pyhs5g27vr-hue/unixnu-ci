@@ -20,6 +20,9 @@ new = ("            if any(begin < e and b < end for b, e in self.occupied + pla
        "                    print(f'fuxi layout: root {n2} {s2[\"va\"]:#x} size {s2[\"size\"]:#x}', flush=True)\n"
        "                for s3 in self.native.segments:\n"
        "                    print(f'fuxi layout: native seg {s3[\"name\"]} size {s3[\"size\"]:#x}', flush=True)\n"
-       "                raise ValueError(f'Native {segment[\"name\"]} overlaps a retained segment')\n")
+       "                # 968 B17: the CI shows only the log tail (the Traceback), so the summary rides in the exception text.\n"
+       "                raise ValueError(f'Native {segment[\"name\"]} overlaps a retained segment: {begin:#x}-{end:#x} size {end - begin:#x}, '\n"
+       "                                 f'free before first overlap {max(0, first - begin):#x}, over by {end - first:#x}, '\n"
+       "                                 f'overlaps ' + ', '.join(f'{b:#x}-{e:#x}' for b, e in hits[:6]))\n")
 assert s.count(old) == 1, 'validate anchor'
 open(p, 'w').write(s.replace(old, new, 1)); print(p, ': layout diagnostics added')
