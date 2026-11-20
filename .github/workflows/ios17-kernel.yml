@@ -2026,6 +2026,10 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fsb-rebuild-nil.py" $files || echo "::warning::fsb v3 not applied"
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fsb-v3-diag.py" $files || true
           grep -c 'fuxi-direct-3' $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "::warning::fsb v3 NOT in FuxiStatusBar.c"
+          # DeepSeek 20:42 (red bar v4): 21H16 never calls -_visualProviderClass (FSB:pc 0 on fsb3); wrap the class method
+          # +visualProviderSubclassForScreen:visualProviderInfo: (Fallback/nil -> our subclass), FSB:vsc beacons.
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fsb-v4-subclass-hook.py" $files || echo "::warning::fsb v4 not applied"
+          grep -c 'fuxi-v4' $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "::warning::fsb v4 NOT in FuxiStatusBar.c"
           grep -c 'gSub\[k\] ? gSub\[k\]' $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "::warning::fsb direct fix NOT applied"
           grep -c fsbNeedsUpdate $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "fsbNeedsUpdate 0 (Kerfand 968+ keeps its own version)"
 
