@@ -159,4 +159,49 @@ if patch_dir:
         Path(p).write_text(s.replace(LATE_OLD, LATE_NEW, 1)); k += 1
         print('baseline: zaudio unwinds first', p)
     assert k >= 1, 'no fuxi-kernel-baseline.sh with the wallpaper LATE_PATCH line'
+# 9: 968a7c6 ADT additions (2026-11-21, Bluetooth found without its node; audio needs the product type): copied from 968's
+# ios17/scripts/make-fuxi-adt.py, the P3 -> sRGB gamut change left out.
+ADT_EDITS = [
+    ("PHONE_MODELS = {",
+     "# /product product-id of the real board device tree (IPSW Firmware/all_flash/DeviceTree.<board>.im4p). libMobileGestalt keys its product\n"
+     "# table by these 20 bytes (MGGetProductType); without them it answers 0xffffffff, and VirtualAudio, which picks its compiled-in routing\n"
+     "# database by that product type (VirtualAudio 0x6e3dc), finds no category (\"Unable to locate category '%s' in the routing database\"),\n"
+     "# so no audio session gets an output route. iPhone15,2: DeviceTree.d73ap.im4p of iPhone15,2_17.7_21H16_Restore.ipsw (MG table index 55,\n"
+     "# product type 0xaf477c2d). iPhone10,3: DeviceTree.d22ap.im4p (docs/devices/nx769j.md).\n"
+     "# /product/audio acoustic-id of the real board device tree: MobileGestalt's AcousticID, which VirtualAudio turns into its tuning directory\n"
+     "# (/System/Library/Audio/Tunings/AID<n>/VAD/graph_configurations.plist). Without it the answer is 0, AID0 does not exist, VirtualAudio's\n"
+     "# file reader throws \"Could not construct\" (VirtualAudio 0x17296c) and the plug-in stays \"not initialized yet\" (fopen hook, 2026-11-13).\n"
+     "# iPhone15,2: 8006 (DeviceTree.d73ap.im4p; the 21H16 OS volume carries Library/Audio/Tunings/AID8006).\n"
+     "PHONE_ACOUSTIC_IDS = {'iPhone15,2': 8006}\n"
+     "PHONE_PRODUCT_IDS = {'iPhone10,3': bytes.fromhex('fd079b298144a7deb4d7c87fef3eb474d8f0e7eb'),\n"
+     "                     'iPhone15,2': bytes.fromhex('d3b5ffca33e4604460655adfd77fdfa4757e7e93')}\n"
+     "PHONE_MODELS = {"),
+    ("'idiom': 'phone', 'subtype': subtype, 'scale': 3, 'gamut': 'P3', 'fallback': None}",
+     "'idiom': 'phone', 'subtype': subtype, 'scale': 3, 'gamut': 'P3', 'fallback': None,\n"
+     "                    'product_id': PHONE_PRODUCT_IDS.get(args.phone_model), 'acoustic_id': PHONE_ACOUSTIC_IDS.get(args.phone_model)}"),
+    ("                             ('thin-bezel', struct.pack('<I', 1))] if identity else [] )]),",
+     "                             *([('product-id', identity['product_id'])] if identity.get('product_id') else []),\n"
+     "                             ('thin-bezel', struct.pack('<I', 1))] if identity else [] )],\n"
+     "             [node('audio', [('acoustic-id', struct.pack('<I', identity['acoustic_id']))])]\n"
+     "             if identity and identity.get('acoustic_id') else []),"),
+    ("              node('wlan', [('compatible', b'qcom,wcn7850\\0'), ('device_type', b'wlan\\0')])]),",
+     "              node('wlan', [('compatible', b'qcom,wcn7850\\0'), ('device_type', b'wlan\\0')]),\n"
+     "              # Bluetooth (fuxi 2026-11-15): docs/zh/porting/bluetooth.md section 4, as UniXNU-sheng exports it. H4 (encoding 1) at\n"
+     "              # 3.2 Mbaud, four-byte little-endian; FuxiBluetooth.cpp adds local-mac-address and registers the matching \"bluetooth\"\n"
+     "              # IOService once this node exists. iOS 17 bluetoothd then opens /dev/uart.bluetooth (qbt_transport.c).\n"
+     "              node('bluetooth', [('compatible', b'qcom,wcn7850-bt\\0'), ('device_type', b'bluetooth\\0'),\n"
+     "                                   ('transport-encoding', struct.pack('<I', 1)), ('transport-speed', struct.pack('<I', 3200000))])]),"),
+]
+k = 0
+for p in real_files('make-fuxi-adt.py'):
+    s = Path(p).read_text()
+    if "node('bluetooth'" in s:
+        print('adt: already has bluetooth', p); k += 1; continue
+    if not all(s.count(old) == 1 for old, new in ADT_EDITS):
+        print('adt: not the iOS 17 layout, skipped', p); continue
+    for old, new in ADT_EDITS:
+        s = s.replace(old, new, 1)
+    Path(p).write_text(s); k += 1
+    print('adt: bluetooth node + product-id + acoustic-id', p)
+assert k >= 1, 'no iOS 17 make-fuxi-adt.py took the 968 ADT additions'
 print('port-968-radio: done')
