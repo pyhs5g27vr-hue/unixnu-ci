@@ -1,0 +1,70 @@
+diff --git a/NativeAdrenoSubmit.cpp b/NativeAdrenoSubmit.cpp
+index 43cbfa2..5a13530 100644
+--- a/NativeAdrenoSubmit.cpp
++++ b/NativeAdrenoSubmit.cpp
+@@ -154,13 +154,18 @@ IOReturn NativeAdrenoSubmit::setTableSwitching(unsigned mode,IOReturn (*write)(v
+ /* Makes vm the table the GPU runs for the next submission. Mode 1: once every earlier job has finished, the CPU writes TTBR0 (the bank
+  * caches translations per ASID, so the switch needs no TLB operation). Mode 2: the ring's next prologue carries the switch, which the CP
+  * runs after every earlier submission. */
+-IOReturn NativeAdrenoSubmit::useVm(NativeAdrenoVm *vm,const NativeAdrenoRingClock *clock)
++IOReturn NativeAdrenoSubmit::useVm(NativeAdrenoVm *vm,const NativeAdrenoRingClock *clock,bool recovering)
+ {
+     if(!table_mode_ || vm==table_vm_)return kIOReturnSuccess;
+     if(table_mode_==2) {ring(0)->useTable(vm->ttbr0());table_vm_=vm;return kIOReturnSuccess;}
+     if(!clock)return kIOReturnBadArgument;
+-    IOReturn status=waitAll(clock,2000000);
+-    if(status)return status;
++    /* fuxi-recover-replay: after a restart's CP init the GPU is idle and the ring's sequence numbers were renumbered, so a wait for an
++     * older job's fence is answered NativeAdrenoRingFenceArgument (783 = BadArgument through useVm): the replay of a hang could never
++     * switch tables, and recover() poisoned itself on its first replayed job. There is nothing in flight to wait for at that point. */
++    if(!recovering) {
++        IOReturn status=waitAll(clock,2000000);
++        if(status)return status;
++    }
+     status=write_table_(table_cookie_,vm->ttbr0());
+     if(status)return poison();
+     native_adreno_table_switches[1]=native_adreno_table_switches[1]+1;
+@@ -510,7 +515,7 @@ IOReturn NativeAdrenoSubmit::submit(NativeAdrenoVm *vm,const NativeAdrenoSubmitB
+         for(unsigned i=0;i<28;++i)native_adreno_ib_log[slot][4+i]=head[i];
+         native_adreno_ib_log_count=native_adreno_ib_log_count+1;
+     }
+-    status=useVm(vm,clock);
++    status=useVm(vm,clock,false);
+     if(status) {
+         for(size_t i=0;i<handle_count;++i) {vm_->retireJobAfterCompletion(handles[i]);++stats_.references_retired;}
+         return status;
+@@ -762,7 +767,11 @@ bool NativeAdrenoSubmit::cpStalled()
+     if(ring(0)->cpPointers(s)) {stall_checks_=0;return false;}
+     bool same=true;
+     for(unsigned i=0;i<6;++i){if(s[i]!=stall_cp_[i])same=false;stall_cp_[i]=s[i];}
+-    if(!same || (s[0]&0xffff)==(s[1]&0xffff)) {stall_checks_=0;return false;}
++    /* fuxi-recover-replay: an empty ring (RPTR == WPTR) is not progress by itself. A CP that finished the ring but is still inside an
++     * IB (CP_IB1_REM_SIZE or CP_IB2_REM_SIZE non-zero) hung with no submission left to time out on: that is the second hang of
++     * 2026-11-20 13:00, where gpu row 4 read r13/13 (ring empty) with RBBM_STATUS 800005 and this check answered "no hang" for 44 s
++     * until the machine's own watchdog fired. Only a truly idle CP (ring empty and both IB remaining zero) restarts the count. */
++    if(!same || ((s[0]&0xffff)==(s[1]&0xffff) && !s[3] && !s[4])) {stall_checks_=0;return false;}
+     if(++stall_checks_<StallChecks)return false;
+     stall_checks_=0;
+     native_adreno_recover_trace[0]=8;native_adreno_recover_trace[1]=s[0]|(s[5]<<16);
+@@ -924,7 +933,7 @@ IOReturn NativeAdrenoSubmit::recover(NativeAdrenoRestart restart,void *cookie,co
+         Job *job=find(next);
+         NativeAdrenoVm *vm=job && job->vm?job->vm:vm_;
+         const bool run=job && !vm->unusable() && job->word_count;
+-        status=useVm(vm,clock);
++        status=useVm(vm,clock,true);
+         if(status) {native_adreno_recover_trace[0]=5;native_adreno_recover_trace[1]=uint32_t(status);return poison();}
+         ring(0)->useContext(job?job->context:0);
+         uint32_t value=0;
+diff --git a/NativeAdrenoSubmit.h b/NativeAdrenoSubmit.h
+index b1cc8d4..a393340 100644
+--- a/NativeAdrenoSubmit.h
++++ b/NativeAdrenoSubmit.h
+@@ -99,7 +99,7 @@ private:
+     NativeAdrenoVm *table_vm_=nullptr;
+     void *table_cookie_=nullptr;
+     IOReturn (*write_table_)(void *,uint64_t ttbr0)=nullptr;
+-    IOReturn useVm(NativeAdrenoVm *,const NativeAdrenoRingClock *);
++    IOReturn useVm(NativeAdrenoVm *,const NativeAdrenoRingClock *,bool recovering=false);
+     NativeAdrenoRing *ring_=nullptr;
+     /* Two rings and the CP's context switch between them (NativeAdrenoPreempt): ring 0 serves every queue but the low and
+      * background ones, which go to ring 1. A submission to the ring the CP does not run is queued behind, and the switch is
