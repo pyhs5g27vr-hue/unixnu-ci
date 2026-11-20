@@ -1965,6 +1965,11 @@ jobs:
           files=$( (readlink -f device-ios17/statusbar/FuxiStatusBar.c; find device device-ios17 -name FuxiStatusBar.c -type f) 2>/dev/null | sort -u)
           echo "$files"
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/sb-avoid-edit.py" $files
+          # 2026-11-20 direct scanout: the 1080x2400 panel is 360x800 pt (no iPhone size), so UIKit answers its Fallback
+          # provider and the bar is a red strip. Answer our subclass whatever it chose, and fall back through the
+          # Split-family names when one is missing.
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fsb-fallback-fix.py" $files
+          grep -c 'gSub\[k\] ? gSub\[k\]' $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "::warning::fsb direct fix NOT applied"
           grep -c fsbNeedsUpdate $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "fsbNeedsUpdate 0 (Kerfand 968+ keeps its own version)"
 
       - name: Patch the status bar script's hardcoded paths
