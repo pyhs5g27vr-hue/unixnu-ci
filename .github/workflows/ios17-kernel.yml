@@ -1731,6 +1731,17 @@ jobs:
           fi
           find out-ios17 -name kernel.macho -print
 
+      - name: kernel build errors (on failure)
+        if: ${{ failure() && inputs.build_kernel }}
+        working-directory: UniXNU
+        run: |
+          # The kernel step shows only the tail of a failing archive log; print every compiler error line from all of them.
+          for f in out-ios17/fuxi/logs/*.log; do
+            n=$(grep -c ' error: \|error: undefined\|Undefined symbols\|ld: ' "$f" 2>/dev/null || true)
+            [ "${n:-0}" -gt 0 ] || continue
+            echo "== $f ($n)"; grep -n ' error: \|error: undefined\|Undefined symbols\|ld: ' "$f" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-400 | head -40
+          done
+
       - name: Verify touch symbols in the built kernel
         if: ${{ !cancelled() && inputs.build_kernel }}
         working-directory: UniXNU
