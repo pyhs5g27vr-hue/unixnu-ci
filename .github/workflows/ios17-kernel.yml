@@ -1745,6 +1745,8 @@ jobs:
             n=$(grep -c ' error: \|error: undefined\|Undefined symbols\|ld: ' "$f" 2>/dev/null || true)
             [ "${n:-0}" -gt 0 ] || continue
             echo "== $f ($n)"; grep -n ' error: \|error: undefined\|Undefined symbols\|ld: ' "$f" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-400 | head -40
+            # The linker lists each missing symbol (and who references it) below "Undefined symbols": show that list.
+            grep -A 90 'Undefined symbols' "$f" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-300 | head -100 || true
           done
 
       - name: Verify touch symbols in the built kernel
@@ -1929,7 +1931,7 @@ jobs:
           files=$( (readlink -f device-ios17/statusbar/FuxiStatusBar.c; find device device-ios17 -name FuxiStatusBar.c -type f) 2>/dev/null | sort -u)
           echo "$files"
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/sb-avoid-edit.py" $files
-          grep -c fsbNeedsUpdate $(readlink -f device-ios17/statusbar/FuxiStatusBar.c)
+          grep -c fsbNeedsUpdate $(readlink -f device-ios17/statusbar/FuxiStatusBar.c) || echo "fsbNeedsUpdate 0 (Kerfand 968+ keeps its own version)"
 
       - name: Patch the status bar script's hardcoded paths
         if: ${{ !cancelled() && inputs.build_addon }}
