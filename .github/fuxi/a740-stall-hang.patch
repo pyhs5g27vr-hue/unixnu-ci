@@ -1,0 +1,92 @@
+diff --git a/NativeAdrenoRing.cpp b/NativeAdrenoRing.cpp
+index f24b2bc..358f4bd 100644
+--- a/NativeAdrenoRing.cpp
++++ b/NativeAdrenoRing.cpp
+@@ -472,6 +472,15 @@ IOReturn NativeAdrenoRing::progressState(uint32_t out[6])
+     out[4]+=roq1>>16;out[5]+=roq2>>16;
+     return kIOReturnSuccess;
+ }
++/* fuxi-stall-hang */
++IOReturn NativeAdrenoRing::stallState(uint32_t out[6])
++{
++    static const uint32_t regs[6]={0x0806,0x0807,0x0928,0x092a,0x092d,0x0a66};
++    if(!out)return kIOReturnBadArgument;
++    if(!attached_)return kIOReturnNotReady;
++    for(unsigned i=0;i<6;++i)if(io_.read32(io_.cookie,regs[i],&out[i]))return kIOReturnIOError;
++    return kIOReturnSuccess;
++}
+ IOReturn NativeAdrenoRing::busHalt(bool gx_off,unsigned spins)
+ {
+     enum : uint32_t {RbbmGbifHalt=0x0016,RbbmGbifHaltAck=0x0017,GbifHalt=0x3c45,GbifHaltAck=0x3c46,ClientHalt=1u,ArbHalt=2u};
+diff --git a/NativeAdrenoRing.h b/NativeAdrenoRing.h
+index b5191d1..f71aa88 100644
+--- a/NativeAdrenoRing.h
++++ b/NativeAdrenoRing.h
+@@ -178,6 +178,8 @@ public:
+     /* a6xx_progress's CP state: IB1 base (lo, hi), IB2 base (lo, hi), IB1 remaining and IB2 remaining dwords, each remaining count plus
+      * what the ROQ fetched but the SQE has not consumed (CP_ROQ_AVAIL_IB1/IB2 bits 31:16). */
+     IOReturn progressState(uint32_t out[6]);
++    /* fuxi-stall-hang: CP_RB_RPTR, CP_RB_WPTR, CP_IB1_BASE lo, CP_IB1_REM_SIZE, CP_IB2_REM_SIZE, CP_BV_RB_RPTR (raw, no ROQ). */
++    IOReturn stallState(uint32_t out[6]);
+     /* a6xx_bus_clear_pending_transactions(gx_off): with gx_off the GX side of GBIF first (RBBM_GBIF_HALT), then new client requests and
+      * all AXI requests, each until acknowledged (spin_until: bounded here by `spins` reads), then the halt cleared. */
+     IOReturn busHalt(bool gx_off,unsigned spins);
+diff --git a/NativeAdrenoSubmit.cpp b/NativeAdrenoSubmit.cpp
+index befb29e..53e2267 100644
+--- a/NativeAdrenoSubmit.cpp
++++ b/NativeAdrenoSubmit.cpp
+@@ -754,6 +754,20 @@ IOReturn NativeAdrenoSubmit::retireCompleted()
+     driveSwitch(nullptr);
+     return kIOReturnSuccess;
+ }
++/* fuxi-stall-hang: true once the CP sat on the same ring word and the same IB position with work left (RPTR != WPTR) for
++ * StallChecks checks in a row (2 s at the 500 ms hangcheck period). Any change, or an empty ring, starts the count again. */
++bool NativeAdrenoSubmit::cpStalled()
++{
++    uint32_t s[6]={};
++    if(ring(0)->stallState(s)) {stall_checks_=0;return false;}
++    bool same=true;
++    for(unsigned i=0;i<6;++i){if(s[i]!=stall_cp_[i])same=false;stall_cp_[i]=s[i];}
++    if(!same || (s[0]&0xffff)==(s[1]&0xffff)) {stall_checks_=0;return false;}
++    if(++stall_checks_<StallChecks)return false;
++    stall_checks_=0;
++    native_adreno_recover_trace[0]=8;native_adreno_recover_trace[1]=s[0]|(s[5]<<16);
++    return true;
++}
+ bool NativeAdrenoSubmit::madeProgress()
+ {
+     if(progress_retries_>=3)return false;
+@@ -796,6 +810,9 @@ IOReturn NativeAdrenoSubmit::hangCheck(bool *hung)
+             }
+         }
+     }
++    /* fuxi-stall-hang: a CP that has not moved for 2 s is hung whatever the fences say (two rings: the newest fence may be on the
++     * ring that still completes, or already at last). */
++    if(cpStalled()) {progress_retries_=0;++stats_.hangs;*hung=true;return kIOReturnSuccess;}
+     NativeAdrenoRing *const r=ringOfFence(last)?ringOfFence(last):ring(0);
+     uint32_t fence=0;
+     if(r->observeFence(last,nullptr,0,&fence)==NativeAdrenoRingFencePoisoned) {
+@@ -876,7 +893,7 @@ IOReturn NativeAdrenoSubmit::recover(NativeAdrenoRestart restart,void *cookie,co
+     IOReturn status=restart(cookie,ring(0),hung);
+     out->status=status;
+     if(status) {native_adreno_recover_trace[0]=2;native_adreno_recover_trace[1]=uint32_t(status);return poison();}
+-    poisoned_=false;hang_fence_=hung;progress_retries_=0;
++    poisoned_=false;hang_fence_=hung;progress_retries_=0;stall_checks_=0;
+     if(guilty) {status=release(*guilty);if(status)return status;}
+     /* The GPU is idle after the restart's CP init: the CPU installs the kernel table, and each replayed job switches to its own. */
+     if(table_mode_) {
+diff --git a/NativeAdrenoSubmit.h b/NativeAdrenoSubmit.h
+index b53bbf8..fe845d3 100644
+--- a/NativeAdrenoSubmit.h
++++ b/NativeAdrenoSubmit.h
+@@ -87,6 +87,10 @@ private:
+     } jobs_;
+     /* msm hangcheck state: the fence seen at the last check, the progress retries spent on it and the CP state then (a6xx_progress). */
+     uint32_t hang_fence_=0,progress_retries_=0,last_cp_[6]{};
++    /* fuxi-stall-hang: the CP state at the last check and how many checks in a row it stayed the same with RPTR != WPTR. */
++    uint32_t stall_cp_[6]{},stall_checks_=0;
++    static constexpr uint32_t StallChecks=4;
++    bool cpStalled();
+     bool madeProgress();
+     NativeAdrenoVm *vm_=nullptr;   /* the default VM: the kernel's table, installed at bring-up */
+     /* Page table switching between processes: mode 0 none (one table for everything), 1 the CPU writes TTBR0 while the GPU is idle,
