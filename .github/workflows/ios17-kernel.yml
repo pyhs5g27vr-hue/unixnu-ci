@@ -1646,6 +1646,17 @@ jobs:
           # 2026-11-20: home / switcher gestures (53f disabled NativeHidInput's edge hook; Kerfand 82e/968 turned it back on).
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/touch-edge-on.py" device device-ios17 || echo "::warning::edge hook source not found before the kernel step"
 
+      - name: fuxi CPU frequency control (sheng-cpufreq, ported from the author 968 kernel)
+        if: ${{ !cancelled() && inputs.build_kernel }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/cpufreq-port.py" "$GITHUB_WORKSPACE" \
+            "$GITHUB_WORKSPACE/ci-self/.github/fuxi/CpuFreqProbe.cpp"
+          echo "=== 验证 ==="
+          grep -c 'sheng_cpufreq_poll' device/package/BootProgress.c || true
+          grep -c 'CpuFreqProbe' device/scripts/build-boot-progress.py || true
+          grep -c 'sheng_cpu_idle_mach' device/package/CpuFreqProbe.cpp || true
+
       - name: kernel
         if: ${{ inputs.build_kernel }}
         working-directory: UniXNU
