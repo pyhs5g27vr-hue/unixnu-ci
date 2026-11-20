@@ -2,7 +2,7 @@ diff --git a/NativeAdrenoSubmit.cpp b/NativeAdrenoSubmit.cpp
 index 43cbfa2..5a13530 100644
 --- a/NativeAdrenoSubmit.cpp
 +++ b/NativeAdrenoSubmit.cpp
-@@ -154,13 +154,18 @@ IOReturn NativeAdrenoSubmit::setTableSwitching(unsigned mode,IOReturn (*write)(v
+@@ -154,13 +154,19 @@ IOReturn NativeAdrenoSubmit::setTableSwitching(unsigned mode,IOReturn (*write)(v
  /* Makes vm the table the GPU runs for the next submission. Mode 1: once every earlier job has finished, the CPU writes TTBR0 (the bank
   * caches translations per ASID, so the switch needs no TLB operation). Mode 2: the ring's next prologue carries the switch, which the CP
   * runs after every earlier submission. */
@@ -17,8 +17,9 @@ index 43cbfa2..5a13530 100644
 +    /* fuxi-recover-replay: after a restart's CP init the GPU is idle and the ring's sequence numbers were renumbered, so a wait for an
 +     * older job's fence is answered NativeAdrenoRingFenceArgument (783 = BadArgument through useVm): the replay of a hang could never
 +     * switch tables, and recover() poisoned itself on its first replayed job. There is nothing in flight to wait for at that point. */
++    IOReturn status=kIOReturnSuccess;
 +    if(!recovering) {
-+        IOReturn status=waitAll(clock,2000000);
++        status=waitAll(clock,2000000);
 +        if(status)return status;
 +    }
      status=write_table_(table_cookie_,vm->ttbr0());
