@@ -2015,7 +2015,13 @@ jobs:
           # 2026-11-20 metalup (DeepSeek metal-bridge-skip-merged.py): AdrenoMetal main folded bridge patch 0001 into its source;
           # the bridge build skips patches the checkout no longer carries instead of failing on git apply 128.
           if [ "${{ inputs.metal_upstream }}" = "true" ]; then
-            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metal-bridge-skip-merged.py" scripts/build-adreno-metal-bridge.py || echo "::warning::bridge skip-merged not applied"
+            # 2026-11-21 metalup plan A (DeepSeek metalup-plan.md): the bridge/plugin scripts and translator inputs that go with
+            # AdrenoMetal main come from UniXNU 8542980 (PATCHES 0063+0064, translator 46e7cc96); metalup-port.py copies them
+            # verbatim and adds the ios17e target back. 53f's 24-patch table collided on 0004 (run 44753999739).
+            U=8542980d02b4d2cc5c32ee3542de1760b2562aac; M="$RUNNER_TEMP/unixnu-main"; mkdir -p "$M/scripts/data"
+            for f in scripts/build-adreno-metal-bridge.py scripts/build-adreno-metal-plugin.py scripts/data/gpu-metal-vulkan-inputs.json; do
+              curl -fsSL --retry 3 -o "$M/$f" "https://raw.githubusercontent.com/UniXNU/UniXNU/$U/$f"; done
+            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
           fi
           # 2026-11-20 搬家清单 6（壁纸页）：supportsExtendedXR10Formats 换成作者 11-17 插件那一行（PosterBoard 放行），
           # DeepSeek metal-xr10-posterboard.py，原文取自 up/AdrenoMetal/NativeBridgeMetalFrontend.mm:5178。
