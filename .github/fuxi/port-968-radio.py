@@ -118,4 +118,19 @@ if patch_dir:
     for name in PATCHES:
         (patch_dir / name).write_bytes(get('unixnu/patches/xnu-10063-arm64e/' + name))
         print('968 xnu patch:', patch_dir / name)
+    # 968a7c6's fuxi-kernel-baseline.sh unwinds ios17-zaudio-hal-mount.patch before the wallpaper patch on the second (archive) pass,
+    # otherwise offline-owner-systemos-mount.patch no longer applies (radio B2 44737262697: kern_exec.c:183). Same two lines here.
+    LATE_OLD = 'for LATE_PATCH in "$ROOT/patches/xnu-10063-arm64e/ios17-wallpaper-iphone.patch"'
+    LATE_NEW = ('# ios17-zaudio-hal-mount.patch adds lines right after the wallpaper patch\'s: it unwinds before it.\n'
+                'for LATE_PATCH in "$ROOT/patches/xnu-10063-arm64e/ios17-zaudio-hal-mount.patch" "$ROOT/patches/xnu-10063-arm64e/ios17-wallpaper-iphone.patch"')
+    k = 0
+    for p in real_files('fuxi-kernel-baseline.sh'):
+        s = Path(p).read_text()
+        if 'ios17-zaudio-hal-mount.patch' in s:
+            print('baseline already unwinds zaudio', p); k += 1; continue
+        if s.count(LATE_OLD) != 1:
+            print('!! baseline anchor', p); continue
+        Path(p).write_text(s.replace(LATE_OLD, LATE_NEW, 1)); k += 1
+        print('baseline: zaudio unwinds first', p)
+    assert k >= 1, 'no fuxi-kernel-baseline.sh with the wallpaper LATE_PATCH line'
 print('port-968-radio: done')
