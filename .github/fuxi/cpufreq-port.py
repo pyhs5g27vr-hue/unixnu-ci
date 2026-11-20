@@ -34,40 +34,13 @@ if not destinations:
 for d in destinations:
     print('写入 %s (%d 字节)' % (d, d.stat().st_size))
 
-# ---------------------------------------------------- 2) sheng_cpu_idle_mach
-IDLE_FUNC = '''
-/*
- * Board CPU governor helper: a CPU's idle time so far in mach absolute time units (recount brings it up to now
- * while the CPU idles), for board code that cannot see struct processor. 0 for a CPU number without a processor.
- */
-uint64_t sheng_cpu_idle_mach(int cpu);
-uint64_t
-sheng_cpu_idle_mach(int cpu)
-{
-	processor_t p = cpu_to_processor(cpu);
-	if (p == PROCESSOR_NULL) {
-		return 0;
-	}
-	struct recount_usage usage = {};
-	uint64_t idle = 0;
-	recount_processor_usage(&p->pr_recount, &usage, &idle);
-	return idle;
-}
-'''
-
-patched = 0
-for proc in WS.rglob('osfmk/kern/processor.c'):
-    t = proc.read_text(errors='replace')
-    if 'sheng_cpu_idle_mach' in t:
-        print('跳过（已有）: %s' % proc)
-        patched += 1
-        continue
-    # 追加到文件末尾（作者补丁的位置就是末尾的 #endif 之后）
-    proc.write_text(t + IDLE_FUNC)
-    print('追加 sheng_cpu_idle_mach: %s' % proc)
-    patched += 1
-if not patched:
-    print('!! 没找到 osfmk/kern/processor.c（XNU 树可能还没展开）')
+# ---------------------------------------------- 2) sheng_cpu_idle_mach：走 patch，不在这里改
+# XNU 树是 `unixnu build kernel` 内部才展开的，而这个 step 在它之前跑；等树有了，processor.o 也已经
+# 编好，改源码不生效（2026-11-20 Claude 在 CI 上确认：processor.c 补丁打了 0 个文件）。
+# 所以 helper 由 UniXNU/patches/xnu-10063-arm64e/sheng-cpu-idle.patch 提供，在 XNU 编译前 apply。
+# CpuFreqProbe.cpp 里 sheng_cpu_idle_mach 是 weak 引用：patch 没打上时 busy 读 100%，
+# 所有域停在最高允许频率（governor 的激进端），不会链接失败。
+print('  sheng_cpu_idle_mach: 由 sheng-cpu-idle.patch 提供（本脚本不再改 processor.c）')
 
 # ------------------------------------- 3) build-boot-progress.py 加 C++ 编译
 script = WS / 'device/scripts/build-boot-progress.py'
@@ -187,8 +160,30 @@ if cpufreq_obj is not None:
     script.write_text(s)
     print('改好 %s' % script)
 
+# ------------------------------- 4) iOS 17 的 late probe 调 sheng_cpufreq_probe（Claude 2026-11-20）
+# boot-ci-cpufreq 里根本没有 cpufreq 代码：iOS 17 的 Ios17LegacyDisplayProbe.cpp 从不调用 sheng_cpufreq_probe，
+# 也不编译 CpuFreqProbe.cpp（编译由 cpufreq-ios17-build.py 在 kernel 步骤补上）。968 的探针自己有 fuxi_cpufreq_start，跳过。
+probe_hits = 0
+for f in list(WS.glob('device*/**/Ios17LegacyDisplayProbe.cpp')):
+    t = f.read_text(errors='replace')
+    if 'cpufreq' in t:
+        print('跳过（已有 cpufreq）: %s' % f)
+        probe_hits += 1
+        continue
+    decl = 'extern "C" void sheng_gpu_power_probe(void);\n'
+    call = '\tsheng_gpu_power_probe();\n'
+    if t.count(decl) != 1 or t.count(call) != 1:
+        print('!! %s: 找不到 sheng_gpu_power_probe 的声明/调用（%d/%d）' % (f, t.count(decl), t.count(call)))
+        raise SystemExit(1)
+    t = t.replace(decl, decl + '// fuxi: CPU frequency domains (CpuFreqProbe.cpp, sheng-cpufreq=N); does nothing without the boot-arg.\n'
+                  'extern "C" void sheng_cpufreq_probe(void);\n', 1)
+    t = t.replace(call, call + '\tsheng_cpufreq_probe();\n', 1)
+    f.write_text(t)
+    print('late probe 加 sheng_cpufreq_probe: %s' % f)
+    probe_hits += 1
+
 print('\n=== 验证 ===')
 for d in destinations:
     print('  %s : %d 行' % (d, len(d.read_text().split('\n'))))
-print('  processor.c 补丁: %d 个文件' % patched)
+print('  Ios17LegacyDisplayProbe.cpp: %d 个文件' % probe_hits)
 print('  build-boot-progress.py 含 CpuFreqProbe: %s' % ('CpuFreqProbe' in script.read_text()))

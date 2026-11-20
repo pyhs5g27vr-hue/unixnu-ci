@@ -44,6 +44,7 @@
  * built with exports neither declaration; same prototypes as osfmk/arm/machine_routines.h and libkern/libkern.h. */
 extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern "C" int snprintf(char *, size_t, const char *, ...) __attribute__((format(printf, 3, 4)));
+extern "C" int printf(const char *, ...) __attribute__((format(printf, 1, 2)));
 
 extern "C" {
 char native_cpufreq_row[120];
@@ -225,7 +226,9 @@ void governorThread(void *, wait_result_t) {
     uint64_t winNs = 0, khzNs[3] = {}, busyNs[3] = {};
     uint32_t changes[3] = {};
     for (;;) {
-        delay_for_interval(16, 1000);
+        // fuxi: the author's IOSleep(16) is 16 ms; delay_for_interval's second argument is nanoseconds per unit, so (16, 1000)
+        // slept 16 us and the governor spun a CPU 1000 times faster than meant.
+        delay_for_interval(16, 1000 * 1000);
         const uint64_t t = mach_absolute_time(), dt = t - lastT;
         lastT = t;
         if (!dt) continue;
@@ -328,6 +331,23 @@ extern "C" void sheng_cpufreq_poll(void) {
     if (gL3.va && gMode >= 3 && gL3.voted < 0 && (rd32(gL3.va, kRegEnable) & 1)) voteL3();
     refreshRow();
     native_cpufreq_stage = 2;
+    // fuxi 2026-11-20: the row only reached the boot-progress screen, never the serial log (boot-ci-cpufreq showed no
+    // cpufreq line at all). Print it every 5 s with mode 4's 10 s governor window: per domain level changes, mean MHz,
+    // mean busy % of the busiest CPU; then touch boosts and frame floors, and whether the idle helper is linked.
+    static uint64_t lastPrint;
+    static uint64_t printEvery;
+    if (!printEvery) nanoseconds_to_absolutetime(5000000000ull, &printEvery);
+    const uint64_t now = mach_absolute_time();
+    if (!lastPrint || now - lastPrint >= printEvery) {
+        lastPrint = now;
+        printf("fuxi cpufreq: m%u %s | gov d0 %u/%uMHz/%u%% d1 %u/%uMHz/%u%% d2 %u/%uMHz/%u%% boost %u frame %u/%u idle %d\n",
+               gMode, native_cpufreq_row,
+               native_cpufreq_gov[0], native_cpufreq_gov[1], native_cpufreq_gov[2],
+               native_cpufreq_gov[3], native_cpufreq_gov[4], native_cpufreq_gov[5],
+               native_cpufreq_gov[6], native_cpufreq_gov[7], native_cpufreq_gov[8],
+               native_cpufreq_boosts, native_cpufreq_frame[0], native_cpufreq_frame[1],
+               sheng_cpu_idle_mach_impl != nullptr);
+    }
     lck_mtx_unlock(gLock);
 }
 
@@ -356,6 +376,14 @@ extern "C" void sheng_cpufreq_probe(void) {
     if (mode >= 3) mapWindow(gL3, kL3Base);
     gMode = mode;
     sheng_cpufreq_poll();
+    // fuxi 2026-11-20: the iOS 17 kernel may have no boot-progress monitor round to call sheng_cpufreq_poll (Kerfand 968 added
+    // FuxiCpuFreqLog.cpp for that). Poll once a second from our own thread; a second caller only takes the lock once more.
+    {
+        thread_t poller = nullptr;
+        if (kernel_thread_start([](void *, wait_result_t) {
+                for (;;) {delay_for_interval(1000, 1000 * 1000); sheng_cpufreq_poll();}
+            }, nullptr, &poller) == KERN_SUCCESS) thread_deallocate(poller);
+    }
     if (mode >= 4) {
         thread_t thread = nullptr;
         if (kernel_thread_start(governorThread, nullptr, &thread) == KERN_SUCCESS) thread_deallocate(thread);
