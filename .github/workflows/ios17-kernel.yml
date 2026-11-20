@@ -1741,7 +1741,14 @@ jobs:
           PY
             python3 -m py_compile "$T/scripts/build-fileset-release-reference.py"
             ( cd "$T" && python3 scripts/build-fileset-release-reference.py --tree "$T" --lto ) || {
-              tail -60 $(ls -t "$T"/build/xnu/fileset-reference/*/lto-build.log | head -1); exit 1; }
+              L=$(ls -t "$T"/build/xnu/fileset-reference/*/lto-build.log | head -1)
+              # B11: the tail is only warnings; the compile error of the RELEASE config sits earlier (docs: sheng-vanzhang329,
+              # "the RELEASE-config fileset reference build compiles the same tree without the DEVELOPMENT block").
+              echo "=== reference build errors ($L)"
+              grep -n ' error: \|: fatal error\|Undefined symbols\|\*\*\* \[' "$L" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-400 | head -60 || true
+              grep -B 3 -A 6 ' error: ' "$L" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-300 | head -120 || true
+              grep -A 60 'Undefined symbols' "$L" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-300 | head -70 || true
+              tail -20 "$L"; exit 1; }
             ls -la "$REF"
             cp "$REF" "$RUNNER_TEMP/reference.noctf"
             ./unixnu build kernel -D ../device-ios17 -j 4 || {
