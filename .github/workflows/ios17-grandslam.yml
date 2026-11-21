@@ -558,11 +558,8 @@ jobs:
           gp = Path('drivers/AdrenoMetal/GpuScanoutPresenter.h')
           gs = gp.read_text()
           gs = gs.replace('extern "C" const void *fuxi_scanout_scale_air(size_t *length) __attribute__((weak_import));\n', '')
-          gs = gs.replace(
-              '        const bool own = [name isEqualToString:@"scanout_scale"] && fuxi_scanout_scale_air;\n'
-              '        const void *air = own ? fuxi_scanout_scale_air(&length) : nmb_scanout_convert_air(&length);\n',
-              '        const void *air = nmb_scanout_convert_air(&length);\n'
-          )
+          gs = gs.replace('const bool own = [name isEqualToString:@"scanout_scale"] && fuxi_scanout_scale_air;', 'const bool own = false;')
+          gs = gs.replace('const void *air = own ? fuxi_scanout_scale_air(&length) : nmb_scanout_convert_air(&length);', 'const void *air = nmb_scanout_convert_air(&length);')
           assert 'fuxi_scanout_scale_air' not in gs, 'fuxi_scanout_scale_air still referenced in GpuScanoutPresenter.h'
           gp.write_text(gs)
           print('GpuScanoutPresenter.h: using nmb_scanout_convert_air directly (includes scanout_scale)')
