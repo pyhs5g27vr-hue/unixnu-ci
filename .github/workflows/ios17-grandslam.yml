@@ -74,6 +74,23 @@ jobs:
           git -C UniXNU/drivers/AdrenoMetal log --oneline -3
           git -C UniXNU/drivers/GopFramebuffer log --oneline -3
           git -C UniXNU/drivers/ArmCpu log --oneline -2
+          # Record the reconstructed local submodule commits in UniXNU so `./unixnu build`
+          # does not try to fetch Kerfand's old unpushed submodule SHAs from origin.
+          for sm in drivers/Adreno740 drivers/AdrenoMetal drivers/AppleKeyStoreState drivers/ArmCpu drivers/GopFramebuffer kits/XnuPrelink; do
+            [ -d "UniXNU/$sm" ] && git -C UniXNU add "$sm"
+          done
+          git -C UniXNU -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: record reconstructed submodule pins" || true
+          # User preference: never draw colored boot-stage squares or blue/white beat block on screen.
+          python3 - UniXNU/patches/xnu-10063-arm64e/screen-quiet-after-swap.patch <<'PY'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          old = '+\treturn &native_legacy_swapstat[0] != NULL && native_legacy_swapstat[0] != 0;\n'
+          new = '+\t(void)native_legacy_swapstat; return true;\n'
+          assert old in s, 'screen-quiet anchor'
+          open(p, 'w').write(s.replace(old, new, 1))
+          print('screen-quiet-after-swap: colored boot squares disabled completely')
+          PY
           # Ensure zz-msg-probe.patch doesn't duplicate ipc_kmsg.c include on xnu-10063.141.1
           if [ -f UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch ]; then
             python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch || true
@@ -380,7 +397,7 @@ jobs:
           done
 
       - name: Prepare Mesa, translator and Mesa venv
-        if: ${{ !cancelled() && inputs.build_addon }}
+        if: ${{ success() && inputs.build_addon }}
         working-directory: UniXNU
         env:
           GH_TOKEN: ${{ github.token }}
@@ -414,14 +431,14 @@ jobs:
           PY
 
       - name: Build Turnip for ios17e
-        if: ${{ !cancelled() && inputs.build_addon }}
+        if: ${{ success() && inputs.build_addon }}
         working-directory: UniXNU
         run: |
           cd out-ios17/fuxi/tree
           python3 scripts/build-turnip-darwin.py --target ios17e
 
       - name: Build Metal plugin for ios17e
-        if: ${{ !cancelled() && inputs.build_addon }}
+        if: ${{ success() && inputs.build_addon }}
         working-directory: UniXNU
         run: |
           cd out-ios17/fuxi/tree
@@ -433,7 +450,7 @@ jobs:
           ls -la adreno-metal-plugin17e/ adreno-metal-plugin17e/NativeAdrenoMetal.bundle | head -20
 
       - name: Install FuxiStatusBar-14p-120hz and build GPU addon
-        if: ${{ !cancelled() && inputs.build_addon }}
+        if: ${{ success() && inputs.build_addon }}
         working-directory: UniXNU
         run: |
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/FuxiStatusBar-14p-120hz.c" "$GITHUB_WORKSPACE/device-ios17/statusbar/FuxiStatusBar.c"
