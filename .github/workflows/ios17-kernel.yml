@@ -2092,6 +2092,7 @@ jobs:
       # 因为脚本里 TREE = BASE/'UniXNU/out-ios17/fuxi/tree'。
       - name: metalup plugin directory (8542980 writes build/adreno-metal-plugin-ios17e)
         if: ${{ !cancelled() && inputs.metal_upstream }}
+        working-directory: UniXNU
         run: |
           # 2026-11-21 metalup6 44855008457: the plugin was built and signed into adreno-metal-plugin-ios17e, every later step
           # (base addon, FuxiStatusBar, collect) reads adreno-metal-plugin17e.
