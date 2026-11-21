@@ -537,6 +537,22 @@ jobs:
           subprocess.run(['git', '-C', str(src), 'checkout', '-q', '--detach', 'FETCH_HEAD'], check=True)
           print('translator ->', subprocess.check_output(['git', '-C', str(src), 'rev-parse', 'HEAD'], text=True).strip())
           PY2
+          # Guard iOS 17 SDK shim enums that already exist in Xcode 26's iPhoneOS26.5.sdk MTLLibrary.h
+          python3 - <<'PYENUM'
+          from pathlib import Path
+          p = Path('drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm')
+          s = p.read_text()
+          n = 0
+          for line in (
+              'enum {MTLMathModeSafe = 0, MTLMathModeRelaxed = 1, MTLMathModeFast = 2};',
+              'enum {MTLMathFloatingPointFunctionsFast = 0, MTLMathFloatingPointFunctionsPrecise = 1};',
+          ):
+              if line in s:
+                  s = s.replace(line, '// ' + line + ' /* in iPhoneOS26 SDK */')
+                  n += 1
+          p.write_text(s)
+          print('guarded SDK26 enum shims:', n)
+          PYENUM
           python3 scripts/build-adreno-metal-plugin.py --target ios17e --no-replay
           cd build
           if [ -d adreno-metal-plugin-ios17e ] && [ ! -e adreno-metal-plugin17e/NativeAdrenoMetal.bundle ]; then
