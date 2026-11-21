@@ -5,8 +5,7 @@
  			}
  
 +			/*
-+			 * fuxi (ported verbatim from Ken-u/UniXNU-rk3588-common rk3588-wc-batch-flush.patch):
-+			 * a page that stops being cacheable (an IOSurface or any other write-combined buffer: the pages of a fresh buffer come in this
++			 * RK3588: a page that stops being cacheable (an IOSurface or any other write-combined buffer: the pages of a fresh buffer come in this
 +			 * batch, zero filled through the cacheable physical aperture or still holding the lines of their previous owner) must leave the data
 +			 * cache before the first non-cacheable store of its new owner, or a dirty line is written back after the store and puts the old
 +			 * contents (zeros) back, one 64-byte line at a time. The single page path (pmap_sync_wimg) does that; this batch path only did it
@@ -26,7 +25,7 @@
  
  	if (state == PMAP_BATCH_SET_CACHE_ATTRIBUTES_CACHEFLUSH_PASS) {
 -		/* Pass 3: Flush the cache if the page is recently set to RT */
-+		/* Pass 3: Flush the cache if the page is recently set to RT, or to a type that is not cacheable */
++		/* Pass 3: Flush the cache if the page is recently set to RT, or to a type that is not cacheable (RK3588) */
  		PMAP_TRACE(2, PMAP_CODE(PMAP__BATCH_UPDATE_CACHING), page_cnt, cacheattr, 0xCECC0DE3, page_index);
  #if !XNU_MONITOR
  		/**
