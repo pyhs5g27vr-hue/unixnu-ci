@@ -412,6 +412,9 @@ jobs:
         run: |
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-968-dictation.py" dictation \
             $(find device device-ios17 -name BootWatchdogPolicy.c -type f)
+          # 2026-11-21 #10: lock screen no dim (boot2-nodim 11-18 in source), managed com.apple.springboard.plist
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-nodim-apps.py" nodim \
+            $(find device device-ios17 -name BootWatchdogPolicy.c -type f)
 
       - name: skip Setup (Hello) with sheng-skip-setup=1
         run: |
@@ -1555,6 +1558,12 @@ jobs:
           PY
           grep -c 'printf("SA' device/patches/xnu/zzy-staged-system-apps.patch
           exit 0
+
+      - name: system apps (#11, apps-wp3 call swap + apps-union /Applications in source, 2026-11-21)
+        run: |
+          # Takes effect with sheng-staged-apps=1 only (both functions return at once without it).
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-nodim-apps.py" apps device/patches/xnu/zzy-staged-system-apps.patch
+          grep -c native_staged_apps_union device/patches/xnu/zzy-staged-system-apps.patch
 
       - name: fuxi battery (upstream ShengBattery, 2026-11-16)
         if: ${{ inputs.build_kernel }}
