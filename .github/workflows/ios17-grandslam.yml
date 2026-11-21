@@ -95,10 +95,25 @@ jobs:
           open(p, 'w').write(s.replace(old, new, 1))
           print('screen-quiet-after-swap: colored boot squares disabled completely')
           PY
-          # Ensure zz-msg-probe.patch doesn't duplicate ipc_kmsg.c include on xnu-10063.141.1
-          if [ -f UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch ]; then
-            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch || true
-          fi
+          # Ensure zz-msg-probe.patch and zzz-webkit-msg-probe.patch declare proc_pid for RELEASE LTO reference
+          for mp in UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch UniXNU/patches/xnu-10063-arm64e/zzz-webkit-msg-probe.patch; do
+            [ -f "$mp" ] && python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" "$mp"
+          done
+          # Reconstructed drivers/Adreno740 has identical content to f4a9fbb3... with a fresh local commit hash;
+          # update prepare-fuxi-driver-compat.py to recognize the reconstructed HEAD.
+          A740_REV=$(git -C UniXNU/drivers/Adreno740 rev-parse HEAD)
+          for f in device/scripts/prepare-fuxi-driver-compat.py device-ios17/scripts/prepare-fuxi-driver-compat.py; do
+            [ -f "$f" ] && [ ! -L "$f" ] || continue
+            python3 - "$f" "$A740_REV" <<'PY'
+          import sys
+          p, rev = sys.argv[1], sys.argv[2]
+          s = open(p).read()
+          old = 'f4a9fbb3da01457a35a127e62be64ab702bd2c18'
+          if old in s:
+              open(p, 'w').write(s.replace(old, rev))
+              print(p, ': Adreno740 rev ->', rev)
+          PY
+          done
 
       - name: fixture additions (14 pairings for macOS CI LTO reference)
         working-directory: UniXNU
