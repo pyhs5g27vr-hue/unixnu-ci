@@ -2090,6 +2090,16 @@ jobs:
       # 第 8 项：编 dylib + 给插件加 @loader_path/FuxiStatusBar.dylib + 重签 + 塞进 addon。
       # 脚本里有四组作者硬编码路径，必须先 sed。BASE 指到**含 UniXNU/ 的那一层**（$GITHUB_WORKSPACE），
       # 因为脚本里 TREE = BASE/'UniXNU/out-ios17/fuxi/tree'。
+      - name: metalup plugin directory (8542980 writes build/adreno-metal-plugin-ios17e)
+        if: ${{ !cancelled() && inputs.metal_upstream }}
+        run: |
+          # 2026-11-21 metalup6 44855008457: the plugin was built and signed into adreno-metal-plugin-ios17e, every later step
+          # (base addon, FuxiStatusBar, collect) reads adreno-metal-plugin17e.
+          cd out-ios17/fuxi/tree/build
+          if [ -d adreno-metal-plugin-ios17e ] && [ ! -e adreno-metal-plugin17e/NativeAdrenoMetal.bundle ]; then
+            rm -rf adreno-metal-plugin17e; ln -s adreno-metal-plugin-ios17e adreno-metal-plugin17e; fi
+          ls -la adreno-metal-plugin17e/ adreno-metal-plugin17e/NativeAdrenoMetal.bundle | head -20
+
       - name: fuxi status bar centring (2026-11-16)
         if: ${{ !cancelled() && inputs.build_addon }}
         run: |
