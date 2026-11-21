@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal v4 enhancements:
+"""Minimal v4/v5 enhancements:
 1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
 2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe (INTF_FRAME_COUNT + INTF_TEAR_INT_COUNT_VAL)
    + optional fuxi-panel-hz=60|90|120 Xiaomi 13 m3_38_0c_0a HS DCS timing switch (default 0 = off).
+3) GpuPowerProbe.cpp: upstream UniXNU-sheng/package/GpuPowerProbe.cpp:739 native_adreno_gpu_interrupt(status)
+   call in gpuIrq() so Adreno740's interrupt-driven fence completion pass wakes waiters immediately.
 """
 import pathlib, sys
 
@@ -135,10 +137,40 @@ void fuxiPanelHzThread(void *, wait_result_t) {
     p.write_text(t)
     print('patched AppleARMBacklight.cpp:', p)
 
+def patch_gpupower(p: pathlib.Path):
+    t = p.read_text()
+    if 'native_adreno_gpu_interrupt' in t:
+        print('already patched:', p)
+        return
+    decl_anchor = 'extern "C" bool native_adreno_preempt_irq() __attribute__((weak));   // NativeAdrenoPublish.cpp\n'
+    irq_anchor = (
+        '        if (gPreemptCall) thread_call_enter(gPreemptCall);\n'
+        '    }\n'
+        '    thread_wakeup(event_t(&gIrqCount));\n'
+    )
+    assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
+    assert t.count(irq_anchor) == 1, f'irq_anchor missing in {p}'
+    t = t.replace(
+        decl_anchor,
+        decl_anchor + 'extern "C" void native_adreno_gpu_interrupt(uint32_t status) __attribute__((weak));   // NativeAdrenoPublish.cpp: asks for the completion pass\n',
+        1,
+    )
+    t = t.replace(
+        irq_anchor,
+        '        if (gPreemptCall) thread_call_enter(gPreemptCall);\n'
+        '    }\n'
+        '    if (native_adreno_gpu_interrupt) native_adreno_gpu_interrupt(status);\n'
+        '    thread_wakeup(event_t(&gIrqCount));\n',
+        1,
+    )
+    p.write_text(t)
+    print('patched GpuPowerProbe.cpp:', p)
+
 if __name__ == '__main__':
     mode = sys.argv[1]
     for a in sys.argv[2:]:
         p = pathlib.Path(a)
         if mode == 'watchdog': patch_watchdog(p)
         elif mode == 'backlight': patch_backlight(p)
+        elif mode == 'gpupower': patch_gpupower(p)
         else: raise SystemExit(f'unknown mode {mode}')
