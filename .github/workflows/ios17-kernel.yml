@@ -2022,6 +2022,20 @@ jobs:
             for f in scripts/build-adreno-metal-bridge.py scripts/build-adreno-metal-plugin.py scripts/data/gpu-metal-vulkan-inputs.json; do
               curl -fsSL --retry 3 -o "$M/$f" "https://raw.githubusercontent.com/UniXNU/UniXNU/$U/$f"; done
             python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
+            # The translator checkout was made earlier from the old inputs (624bab39); run 44837265080 stopped at
+            # "Translator revision differs from the qualified source pin". Move it to the new pin (46e7cc96).
+            python3 - <<'PY2'
+          import json, subprocess
+          from pathlib import Path
+          tr = json.loads(Path('scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']
+          src = Path('.cache/gpu-reference/metal2vulkan')
+          head = subprocess.run(['git', '-C', str(src), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
+          if head != tr['commit']:
+              subprocess.run(['git', '-C', str(src), 'fetch', '-q', '--depth=1', tr.get('mirror', tr['repository']), tr['commit']], check=True)
+              subprocess.run(['git', '-C', str(src), 'checkout', '-q', '-f', '--detach', 'FETCH_HEAD'], check=True)
+              subprocess.run(['git', '-C', str(src), 'clean', '-qfdx'], check=True)
+          print('metalup: translator re-pinned', head[:12], '->', tr['commit'][:12])
+          PY2
           fi
           # 2026-11-20 搬家清单 6（壁纸页）：supportsExtendedXR10Formats 换成作者 11-17 插件那一行（PosterBoard 放行），
           # DeepSeek metal-xr10-posterboard.py，原文取自 up/AdrenoMetal/NativeBridgeMetalFrontend.mm:5178。
