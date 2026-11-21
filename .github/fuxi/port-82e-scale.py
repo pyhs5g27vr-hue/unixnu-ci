@@ -111,12 +111,9 @@ def stubs(s):
     if '__attribute__((weak)) int native_gop_handoff_call' in s: return None
     s = once(s, "handoff_stubs = '''int native_gop_handoff_call(", "handoff_stubs = '''__attribute__((weak)) int native_gop_handoff_call(", 'handoff call')
     s = once(s, 'void *native_gop_handoff_memory(void) { return 0; }', '__attribute__((weak)) void *native_gop_handoff_memory(void) { return 0; }', 'handoff memory')
-    # 82e's GopFramebuffer diff also registers a GOP USB screenshot with Kerfand's own QUD; ours has no
-    # qcom_usb_debug_set_screenshot_storage (run 44756548289 link error). A weak 0 makes usbShotRegister give up.
-    s = once(s, '__attribute__((weak)) void native_touch_probe(void) {}\n',
-             '__attribute__((weak)) void native_touch_probe(void) {}\n'
-             '__attribute__((weak)) int qcom_usb_debug_set_screenshot_storage(void *storage, unsigned long bytes) { (void)storage; (void)bytes; return 0; }\n',
-             'screenshot storage')
+    # qcom_usb_debug_set_screenshot_storage: no weak stub here any more. A weak definition that GopFramebuffer reaches through its
+    # weak_import pointer became a chained-fixup import and emit_prelink refused it (run 44837078374, "Chained fixup imports are not
+    # supported"). The real function comes from 82e's build-fuxi-usb-debug.py edits, see qudshot().
     return once(s, "'volatile int32_t native_touch_extent[4];', 'volatile uint32_t native_touch_edge_stats[4];'):",
         "'volatile int32_t native_touch_extent[4];', 'volatile uint32_t native_touch_edge_stats[4];',\n"
         "                 # NativeGOPPresenter.cpp (the GPU scanout hand-off, sheng-fb-gpu=1) defines its wait counters.\n"
@@ -136,7 +133,44 @@ def tree(files):
         done[f.name] = True
     assert len(done) == 3, ('scale 82e: missing', done)
 
+def qudshot(roots):
+    """82e build-fuxi-usb-debug.py (2026-11-12), verbatim: the QcomUsbScreenshot.c/.h halves of its qud_edit (caller storage for the
+    snapshot, qcom_usb_debug_set_screenshot_storage). The control/INPUT halves are not taken: the CI has its own INPUT verb."""
+    shot_c = (
+        ('static uint8_t pixels[QUD_SCREENSHOT_MAX_BYTES];\n',
+         '/* fuxi-usb-control-20261112: the static buffer is the default; a provider may hand over a larger one. */\n'
+         'static uint8_t pixels_static[QUD_SCREENSHOT_MAX_BYTES];\n'
+         'static uint8_t *pixels = pixels_static;\n'
+         'static size_t pixels_capacity = sizeof(pixels_static);\n'),
+        ('           (uint64_t)w * h * 3u <= QUD_SCREENSHOT_MAX_BYTES;\n}\n',
+         '           (uint64_t)w * h * 3u <= pixels_capacity;\n}\n'
+         'int qcom_usb_debug_set_screenshot_storage(void *storage, size_t bytes)\n'
+         '{\n'
+         '    if (!storage || bytes < sizeof(pixels_static) || bytes > UINT32_MAX || ready) return 0;\n'
+         '    pixels = storage; pixels_capacity = bytes;\n'
+         '    return 1;\n'
+         '}\n'),
+        ('provider(provider_cookie, pixels, sizeof(pixels), &w, &h)', 'provider(provider_cookie, pixels, pixels_capacity, &w, &h)'))
+    shot_h = (
+        ('int qcom_usb_debug_register_framebuffer(const struct qcom_usb_framebuffer *framebuffer);\n',
+         'int qcom_usb_debug_register_framebuffer(const struct qcom_usb_framebuffer *framebuffer);\n'
+         '/* fuxi-usb-control-20261112: caller storage for the snapshot (at least the static default, kept until reset).\n'
+         ' * Call once, before the first SCREENSHOT. Returns 1 when taken. */\n'
+         'int qcom_usb_debug_set_screenshot_storage(void *storage, size_t bytes);\n'),)
+    n = 0
+    for root in map(Path, roots):
+        for rel, pairs in (('kernel/QcomUsbScreenshot.c', shot_c), ('include/QcomUsbScreenshot.h', shot_h)):
+            for p in root.glob('**/QcomXnuUsbDebug/' + rel):
+                t = p.read_text()
+                if 'qcom_usb_debug_set_screenshot_storage' in t: print('scale 82e: %s already has it' % p); n += 1; continue
+                for old, new in pairs:
+                    if t.count(old) != 1: raise SystemExit('%s: screenshot storage anchor changed: %s' % (p, old.splitlines()[0]))
+                    t = t.replace(old, new, 1)
+                p.write_text(t); print('scale 82e: patched %s' % p); n += 1
+    assert n >= 2, 'scale 82e: QcomUsbScreenshot.c/.h not found'
+
 if __name__ == '__main__':
     if sys.argv[1] == 'diffs': diffs(sys.argv[2])
     elif sys.argv[1] == 'tree': tree(sys.argv[2:])
+    elif sys.argv[1] == 'qudshot': qudshot(sys.argv[2:])
     else: raise SystemExit(__doc__)
