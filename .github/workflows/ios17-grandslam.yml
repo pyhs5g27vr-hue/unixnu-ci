@@ -210,6 +210,33 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-nodim-apps.py" nodim \
             $(find device device-ios17 -name BootWatchdogPolicy.c -type f)
 
+          # 1b) Fix fuxi_boot_dictation_prefs EFAULT (rc 14): dictation_body (~6.5 KB) overflows 4 KB scratch page!
+          # Write it in 2048-byte chunks into scratch+0x200 so com.apple.keyboard.preferences.plist writes cleanly (rc 0).
+          for f in $(find device device-ios17 -name BootWatchdogPolicy.c -type f); do
+            python3 - "$f" <<'PYCHUNK'
+          import sys
+          p = sys.argv[1]; t = open(p).read()
+          old = (
+              '   error=copyout(dictation_body,scratch+0x200,sizeof(dictation_body)-1);\n'
+              '   if(!error){struct write_args wr={.fd=fd,.cbuf=scratch+0x200,.nbyte=sizeof(dictation_body)-1};user_ssize_t n=0;error=write(p,&wr,&n);\n'
+              '    if(!error && n!=(user_ssize_t)(sizeof(dictation_body)-1))error=EIO;}\n'
+          )
+          new = (
+              '   for(size_t off=0; !error && off < sizeof(dictation_body)-1; ) {\n'
+              '    size_t chunk = sizeof(dictation_body)-1 - off;\n'
+              '    if(chunk > 2048) chunk = 2048;\n'
+              '    error = copyout(dictation_body + off, scratch + 0x200, chunk);\n'
+              '    if(!error){struct write_args wr={.fd=fd,.cbuf=scratch+0x200,.nbyte=chunk};user_ssize_t n=0;error=write(p,&wr,&n);\n'
+              '     if(!error && n!=(user_ssize_t)chunk)error=EIO;}\n'
+              '    off += chunk;\n'
+              '   }\n'
+          )
+          assert t.count(old) == 1, f'dictation_body write anchor not found in {p}'
+          open(p, 'w').write(t.replace(old, new, 1))
+          print('chunked dictation_body write patched in', p)
+          PYCHUNK
+          done
+
           # 2) #11 33 System Apps (/Applications union + call swap)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-nodim-apps.py" apps \
             device/patches/xnu/zzy-staged-system-apps.patch
