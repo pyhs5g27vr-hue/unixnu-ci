@@ -2041,6 +2041,16 @@ jobs:
             for f in scripts/build-adreno-metal-bridge.py scripts/build-adreno-metal-plugin.py scripts/data/gpu-metal-vulkan-inputs.json; do
               curl -fsSL --retry 3 -o "$M/$f" "https://raw.githubusercontent.com/UniXNU/UniXNU/$U/$f"; done
             python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
+            # 2026-11-21: translator 46e7cc96 has copied::read_pages for linux/macos/windows only, ios17e failed E0425 (runs 44841019947,
+            # 44845334168). One more recorded bridge patch widens the macOS (mach_vm_read_overwrite) one to iOS.
+            cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0065-fuxi-ios-read-pages.patch" drivers/AdrenoMetal/bridge/patches/
+            python3 - <<'P65'
+          from pathlib import Path
+          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
+          old = "    '0064-copies-leave-unreachable-pages-alone.patch']]"
+          assert s.count(old) == 1, 'bridge PATCHES table changed'
+          b.write_text(s.replace(old, "    '0064-copies-leave-unreachable-pages-alone.patch',\n    '0065-fuxi-ios-read-pages.patch']]", 1)); print('bridge: 0065 added')
+          P65
             # The translator checkout was made earlier from the old inputs (624bab39); run 44837265080 stopped at
             # "Translator revision differs from the qualified source pin". Move it to the new pin (46e7cc96).
             python3 - <<'PY2'
