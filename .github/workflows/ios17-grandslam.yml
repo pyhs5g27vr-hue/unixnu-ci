@@ -95,6 +95,8 @@ jobs:
           open(p, 'w').write(s.replace(old, new, 1))
           print('screen-quiet-after-swap: colored boot squares disabled completely')
           PY
+          # Port upstream rk3588-wc-batch-flush.patch: flush+invalidate dirty zero lines on batch VM_WIMG_WCOMB transitions
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-wc-batch-flush.patch" UniXNU/patches/xnu-10063-arm64e/zzz-wc-batch-flush.patch
           # Ensure zz-msg-probe.patch and zzz-webkit-msg-probe.patch declare proc_pid for RELEASE LTO reference
           for mp in UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch UniXNU/patches/xnu-10063-arm64e/zzz-webkit-msg-probe.patch; do
             [ -f "$mp" ] && python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" "$mp"
@@ -224,7 +226,7 @@ jobs:
           new = (
               '   for(size_t off=0; !error && off < sizeof(dictation_body)-1; ) {\n'
               '    size_t chunk = sizeof(dictation_body)-1 - off;\n'
-              '    if(chunk > 2048) chunk = 2048;\n'
+              '    if(chunk > 0x1f0) chunk = 0x1f0;\n'
               '    error = copyout(dictation_body + off, scratch + 0x200, chunk);\n'
               '    if(!error){struct write_args wr={.fd=fd,.cbuf=scratch+0x200,.nbyte=chunk};user_ssize_t n=0;error=write(p,&wr,&n);\n'
               '     if(!error && n!=(user_ssize_t)chunk)error=EIO;}\n'
