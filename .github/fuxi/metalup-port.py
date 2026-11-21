@@ -58,6 +58,8 @@ if not (SRC / 'scripts/build-adreno-metal-bridge.py').exists():
 FILES = [
     'scripts/build-adreno-metal-bridge.py',
     'scripts/build-adreno-metal-plugin.py',
+    # 2026-11-21 (Claude, metalup5 44849031117): the 8542980 plugin script runs it on libvulkan_freedreno.dylib.
+    'scripts/macho-self-bind-weak-imports.py',
     'scripts/data/gpu-metal-vulkan-inputs.json',
 ]
 for rel in FILES:
