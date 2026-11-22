@@ -246,27 +246,20 @@ def patch_modem(p: pathlib.Path):
 
 def patch_submit(p: pathlib.Path):
     t = p.read_text()
-    if 'v14 fast idle-CP unstick' in t:
+    if 'v14b fast idle-CP unstick' in t:
         print('already patched:', p)
         return
-    a_snap = '    const uint32_t want=pending>=1000000?2:pending>=50000?1:0;
-'
-    a_work = '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,50000)) {
-'
-    a_kick = '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,50000)) {
-'
+    a_snap = '    const uint32_t want=pending>=1000000?2:pending>=50000?1:0;\n'
+    a_work = '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,50000)) {\n'
+    a_kick = '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,50000)) {\n'
     assert t.count(a_snap) == 1, f'a_snap missing in {p}'
     assert t.count(a_work) == 1, f'a_work missing in {p}'
     assert t.count(a_kick) == 1, f'a_kick missing in {p}'
-    t = t.replace(a_snap, '    // v14 fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls
-    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;
-', 1)
-    t = t.replace(a_work, '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,8000)) {
-', 1)
-    t = t.replace(a_kick, '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,8000)) {
-', 1)
+    t = t.replace(a_snap, '    // v14b fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls\n    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;\n', 1)
+    t = t.replace(a_work, '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,15000)) {\n', 1)
+    t = t.replace(a_kick, '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,15000)) {\n', 1)
     p.write_text(t)
-    print('patched NativeAdrenoSubmit.cpp (v14: 8ms idle-CP unstick + 500ms ibdump threshold):', p)
+    print('patched NativeAdrenoSubmit.cpp (v14b: 15ms idle-CP unstick + 500ms ibdump threshold):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
