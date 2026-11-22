@@ -573,6 +573,24 @@ jobs:
           s = s.replace(s2, 'const NSUInteger tw = scale_.maxTotalThreadsPerThreadgroup >= 256 ? 32 : 16; [encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + tw - 1) / tw, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(tw, 8, 1)];', 1)
           gp.write_text(s)
           print('GpuScanoutPresenter.h: kSources=6 + 32x8 dispatch patched')
+          # row=1: 只开 telemetry 表（内核 board rows，串口可读），不开 diag=1 的帧 trace / Turnip stamp /
+          # encoder timing —— 那些内存会把 backboardd 顶到 Jetsam 打死（实测 signal 9 / ns 25，present 0）。
+          python3 - <<'PROW'
+          from pathlib import Path
+          p = Path('drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm'); s = p.read_text()
+          a1 = '            setenv("METAL2VULKAN_ENCODER_TIMES", "8ms", 1);\n            setenv("METAL2VULKAN_QUEUE_TIMES", "1", 1);\n        }\n'
+          assert s.count(a1) == 1, 'diag flags anchor'
+          add = ('        // row=1: the telemetry table alone (the kernel board rows, readable over serial), without diag=1 frame\n'
+                 '        // trace, Turnip stamps and encoder timing, whose memory ends backboardd in seconds.\n'
+                 '        if (bootArgSet("row=1")) setenv("SHENG_STATUS", "1", 1);\n'
+                 '        else unsetenv("SHENG_STATUS");\n')
+          s = s.replace(a1, a1 + add, 1)
+          a2 = '        if (getenv("SHENG_DIAG")) {\n            pthread_t telemetry;'
+          assert s.count(a2) == 1, 'telemetry start anchor'
+          s = s.replace(a2, '        if (getenv("SHENG_DIAG") || getenv("SHENG_STATUS")) {\n            pthread_t telemetry;', 1)
+          p.write_text(s)
+          print('row=1 (SHENG_STATUS) patched into the plugin')
+          PROW
           PGSP
           # Add 0065-fuxi-ios-read-pages.patch (if not already present) for ios17e translator 46e7cc96
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0065-fuxi-ios-read-pages.patch" drivers/AdrenoMetal/bridge/patches/
