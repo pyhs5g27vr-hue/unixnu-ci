@@ -573,6 +573,7 @@ jobs:
           s = s.replace(s2, 'const NSUInteger tw = scale_.maxTotalThreadsPerThreadgroup >= 256 ? 32 : 16; [encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + tw - 1) / tw, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(tw, 8, 1)];', 1)
           gp.write_text(s)
           print('GpuScanoutPresenter.h: kSources=6 + 32x8 dispatch patched')
+          PGSP
           # row=1: 只开 telemetry 表（内核 board rows，串口可读），不开 diag=1 的帧 trace / Turnip stamp /
           # encoder timing —— 那些内存会把 backboardd 顶到 Jetsam 打死（实测 signal 9 / ns 25，present 0）。
           python3 - <<'PROW'
@@ -591,7 +592,6 @@ jobs:
           p.write_text(s)
           print('row=1 (SHENG_STATUS) patched into the plugin')
           PROW
-          PGSP
           # Add 0065-fuxi-ios-read-pages.patch (if not already present) for ios17e translator 46e7cc96
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0065-fuxi-ios-read-pages.patch" drivers/AdrenoMetal/bridge/patches/
           python3 - <<'P65'
