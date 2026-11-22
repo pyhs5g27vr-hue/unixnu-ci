@@ -242,76 +242,31 @@ def patch_adsp(p: pathlib.Path):
     print('patched AdspProbe.cpp:', p)
 
 def patch_modem(p: pathlib.Path):
+    print('modem patch skipped in v14 (no unsafe IMEM read):', p)
+
+def patch_submit(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi modem v12b:' in t:
+    if 'v14 fast idle-CP unstick' in t:
         print('already patched:', p)
         return
-    decl_anchor = 'void sheng_fw_close(void *handle);\n'
-    auth_anchor = (
-        '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
-        '    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
-        '    if (image.mdt.relocatable && !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))\n'
-        '        return -2;\n'
-        '    return 0;\n'
-    )
-    assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
-    assert t.count(auth_anchor) == 1, f'auth_anchor missing in {p}'
-    t = t.replace(decl_anchor, decl_anchor + 'void fuxi_modem_probe_files(void) __attribute__((weak));\n', 1)
-    auth_new = (
-        '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
-        '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    IOLog("fuxi modem v12b: pas=0x%x phys=0x%llx bytes=%llu init=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
-        '    if (!scmOk(rInit)) {\n'
-        '        if (pas == kPasDtb) {\n'
-        '            Window im = {};\n'
-        '            if (mapWindow(im, 0x146aa000ull, 0x1000ull)) {\n'
-        '                const uint32_t diagPtr = rd(im, 0x720);\n'
-        '                const uint32_t w1 = rd(im, 0x724), w2 = rd(im, 0x728), w3 = rd(im, 0x72c);\n'
-        '                IOLog("fuxi tzlog: @146aa720=%08x %08x %08x %08x\\n", diagPtr, w1, w2, w3);\n'
-        '                unmap(im);\n'
-        '                if ((diagPtr >= 0x14680000u && diagPtr < 0x146ac000u) || (diagPtr >= 0x80000000u && diagPtr < 0xf0000000u)) {\n'
-        '                    const uint64_t pg = diagPtr & ~0xfffull;\n'
-        '                    const uint32_t pgOff = diagPtr & 0xfffu;\n'
-        '                    Window dw = {};\n'
-        '                    if (mapWindow(dw, pg, 0x4000ull)) {\n'
-        '                        const uint32_t magic = rd(dw, pgOff + 0x00);\n'
-        '                        const uint32_t ver   = rd(dw, pgOff + 0x04);\n'
-        '                        const uint32_t roff  = rd(dw, pgOff + 0x1c);\n'
-        '                        const uint32_t rlen  = rd(dw, pgOff + 0x20);\n'
-        '                        IOLog("fuxi tzlog: hdr magic=%08x ver=%u ring_off=0x%x ring_len=0x%x\\n", magic, ver, roff, rlen);\n'
-        '                        if (roff > 0 && roff < 0x3000u && rlen > 0 && roff + rlen <= 0x3f00u) {\n'
-        '                            const uint32_t dumpLen = (rlen > 768u ? 768u : rlen) & ~3u;\n'
-        '                            const uint32_t start = (rlen - dumpLen) & ~3u;\n'
-        '                            char line[97];\n'
-        '                            uint32_t pos = 0;\n'
-        '                            for (uint32_t k = 0; k < dumpLen; k += 4) {\n'
-        '                                const uint32_t w = rd(dw, pgOff + roff + start + k);\n'
-        '                                for (unsigned b = 0; b < 4; b++) {\n'
-        '                                    uint8_t c = (uint8_t)((w >> (b * 8u)) & 0xffu);\n'
-        '                                    if (c == 0x0a || c == 0x0d || pos == 96) {\n'
-        '                                        if (pos > 0) { line[pos] = 0; IOLog("fuxi tzlog: %s\\n", line); pos = 0; }\n'
-        '                                        continue;\n'
-        '                                    }\n'
-        '                                    if (c >= 0x20 && c <= 0x7e) line[pos++] = (char)c;\n'
-        '                                }\n'
-        '                            }\n'
-        '                            if (pos > 0) { line[pos] = 0; IOLog("fuxi tzlog: %s\\n", line); }\n'
-        '                        }\n'
-        '                        unmap(dw);\n'
-        '                    }\n'
-        '                }\n'
-        '            }\n'
-        '            native_modem_stats[12] = (int32_t)rInit.x0; native_modem_stats[13] = (int32_t)rInit.x1;\n'
-        '        }\n'
-        '        return -1;\n'
-        '    }\n'
-        '    if (image.mdt.relocatable && !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))\n'
-        '        return -2;\n'
-        '    return 0;\n'
-    )
-    t = t.replace(auth_anchor, auth_new, 1)
+    a_snap = '    const uint32_t want=pending>=1000000?2:pending>=50000?1:0;
+'
+    a_work = '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,50000)) {
+'
+    a_kick = '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,50000)) {
+'
+    assert t.count(a_snap) == 1, f'a_snap missing in {p}'
+    assert t.count(a_work) == 1, f'a_work missing in {p}'
+    assert t.count(a_kick) == 1, f'a_kick missing in {p}'
+    t = t.replace(a_snap, '    // v14 fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls
+    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;
+', 1)
+    t = t.replace(a_work, '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,8000)) {
+', 1)
+    t = t.replace(a_kick, '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,8000)) {
+', 1)
     p.write_text(t)
-    print('patched ModemProbe.cpp (v12b rd() tz-log):', p)
+    print('patched NativeAdrenoSubmit.cpp (v14: 8ms idle-CP unstick + 500ms ibdump threshold):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -323,4 +278,5 @@ if __name__ == '__main__':
         elif mode == 'fwslot': patch_fwslot(p)
         elif mode == 'adsp': patch_adsp(p)
         elif mode == 'modem': patch_modem(p)
+        elif mode == 'submit': patch_submit(p)
         else: raise SystemExit(f'unknown mode {mode}')
