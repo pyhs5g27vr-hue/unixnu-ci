@@ -561,20 +561,6 @@ jobs:
           done
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
           cp "$RUNNER_TEMP/fuxi-plugin.py" scripts/build-adreno-metal-plugin.py
-          # 0065: 运行时用「字」粒度读被导入的宿主页 —— fuxi 的 surface 是 cache-inhibited 映射、
-          # 基址只按 4/8 字节对齐，memcpy 的 16 字节 ldnp 会触发 SIGBUS(ESR DFSC 0x21) 把 backboardd 打死转圈。
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/translator-0065-copied-device-safe-page-reads.patch" \
-             drivers/AdrenoMetal/bridge/patches/0065-copied-device-safe-page-reads.patch
-          python3 - <<'P0065'
-          from pathlib import Path
-          p = Path('scripts/build-adreno-metal-bridge.py')
-          s = p.read_text()
-          if '0065-copied' not in s:
-              old = ".patch']]\n"
-              assert s.count(old) == 1, 'PATCHES list anchor'
-              p.write_text(s.replace(old, ".patch',\n    '0065-copied-device-safe-page-reads.patch']]\n", 1))
-              print('registered 0065 with the bridge')
-          P0065
           # Minimal GpuScanoutPresenter.h optimizations: kSources 4->6 (match kernel 6 mappings) + 32x8 dual-wave dispatch
           python3 - <<'PGSP'
           from pathlib import Path
@@ -599,6 +585,18 @@ jobs:
               b.write_text(s.replace(old, "    '0064-copies-leave-unreachable-pages-alone.patch',\n    '0065-fuxi-ios-read-pages.patch']]", 1))
               print('bridge: 0065 added')
           P65
+          # 0066: 被导入的宿主页在 fuxi 上是 cache-inhibited 映射，memcpy 的 16 字节 ldnp 会触发
+          # SIGBUS(ESR DFSC 0x21) 打死 backboardd；拷页改用 8 字节对齐 volatile 读。
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0066-copied-device-safe-page-reads.patch" drivers/AdrenoMetal/bridge/patches/
+          python3 - <<'P66'
+          from pathlib import Path
+          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
+          if '0066-copied-device-safe-page-reads.patch' not in s:
+              old = "    '0065-fuxi-ios-read-pages.patch']]"
+              assert s.count(old) == 1, 'bridge PATCHES table changed (0066)'
+              b.write_text(s.replace(old, "    '0065-fuxi-ios-read-pages.patch',\n    '0066-copied-device-safe-page-reads.patch']]", 1))
+              print('bridge: 0066 added')
+          P66
           # Re-checkout metal2vulkan translator to the 46e7cc96 pin
           python3 - <<'PY2'
           import json, subprocess
