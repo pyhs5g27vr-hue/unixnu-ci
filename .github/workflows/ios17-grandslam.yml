@@ -246,8 +246,6 @@ jobs:
             $(find device device-ios17 UniXNU -name AppleARMBacklight.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" battery \
-            $(find device device-ios17 UniXNU -name ShengBattery.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" fwslot \
             $(find device device-ios17 UniXNU -name FuxiAdspFirmware.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" modem \
