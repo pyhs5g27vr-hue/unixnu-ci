@@ -673,6 +673,22 @@ jobs:
             tar -C "$RUNNER_TEMP/addon-out" -czf "$RUNNER_TEMP/a.tgz" .
             age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/up/ios17-gpuaddon.tgz.age" "$RUNNER_TEMP/a.tgz"; rm -rf "$RUNNER_TEMP/a.tgz" "$RUNNER_TEMP/addon-out"
           fi
+          # 符号化材料：插件的 linker map 与 dSYM 都留在了构建目录里，一起带出来（P0 SIGBUS 定位需要）
+          mkdir -p "$RUNNER_TEMP/sym"
+          find UniXNU/out-ios17 -name 'NativeAdrenoMetal.map' -exec cp {} "$RUNNER_TEMP/sym/" \; 2>/dev/null || true
+          for d in $(find UniXNU/out-ios17 -maxdepth 7 -name 'NativeAdrenoMetal.dSYM' 2>/dev/null); do cp -R "$d" "$RUNNER_TEMP/sym/" || true; done
+          B=$(find UniXNU/out-ios17 -name 'NativeAdrenoMetal' -type f -size +1M 2>/dev/null | head -1)
+          if [ -n "$B" ]; then
+            cp "$B" "$RUNNER_TEMP/sym/NativeAdrenoMetal.stripped" || true
+            llvm-nm -n "$B" > "$RUNNER_TEMP/sym/nm.txt" 2>&1 || true
+            llvm-objdump --macho --private-headers "$B" > "$RUNNER_TEMP/sym/headers.txt" 2>&1 || true
+          fi
+          ls -la "$RUNNER_TEMP/sym" || true
+          if [ -n "$(ls -A "$RUNNER_TEMP/sym" 2>/dev/null)" ]; then
+            tar -C "$RUNNER_TEMP/sym" -czf "$RUNNER_TEMP/sym.tgz" .
+            age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/up/symbols.tgz.age" "$RUNNER_TEMP/sym.tgz"
+          fi
+
           find UniXNU/out-ios17 -name '*.log' -size -20M 2>/dev/null | tar -czf "$RUNNER_TEMP/logs.tgz" -T - 2>/dev/null || true
           [ -s "$RUNNER_TEMP/logs.tgz" ] && age -r "$AGE_RECIPIENT" -o "$RUNNER_TEMP/up/logs.tgz.age" "$RUNNER_TEMP/logs.tgz"
           ls -la "$RUNNER_TEMP/up"
