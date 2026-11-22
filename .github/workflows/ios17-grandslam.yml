@@ -246,8 +246,10 @@ jobs:
             $(find device device-ios17 UniXNU -name AppleARMBacklight.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" sandbox \
-            $(find device device-ios17 UniXNU -name zzw-native-adreno-sandbox-grant.patch -type f 2>/dev/null)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" fwslot \
+            $(find device device-ios17 UniXNU -name FuxiAdspFirmware.cpp -type f 2>/dev/null)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" modem \
+            $(find device device-ios17 UniXNU -name ModemProbe.cpp -type f 2>/dev/null)
 
           # 2) #11 33 System Apps (/Applications union + call swap)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-nodim-apps.py" apps \

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Minimal v4/v5/v6 enhancements:
+"""Minimal v4/v5/v7 enhancements:
 1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
-2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe (INTF_FRAME_COUNT + INTF_TEAR_INT_COUNT_VAL)
-   + optional fuxi-panel-hz=60|90|120 Xiaomi 13 m3_38_0c_0a HS DCS timing switch (default 0 = off).
+2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe + optional fuxi-panel-hz=60|90|120.
 3) GpuPowerProbe.cpp:
-   - upstream UniXNU-sheng/package/GpuPowerProbe.cpp:739 native_adreno_gpu_interrupt(status) in gpuIrq()
+   - upstream native_adreno_gpu_interrupt(status) in gpuIrq()
    - default fuxi-gpu-restart=1 so hangcheck automatically resets & replays on any stall/fault
-   - grant all Metal clients in NativeSandboxGrantProcess ("*")
-4) zzw-native-adreno-sandbox-grant.patch:
-   - support "*" wildcard in NativeSandboxGrantProcess and honor client->getProperty("NativeSandboxGrant")
+   (Safe NativeSandboxGrantProcess whitelist preserved; no "*" wildcard.)
+4) FuxiAdspFirmware.cpp:
+   - optional fuxi-fw-slot=b boot-arg to mount modem_b before modem_a (default stays modem_a).
+5) ModemProbe.cpp:
+   - diagnostic logging in authenticateHeader() (pas/phys/bytes/mdt/hash/scm) + PAS_IS_SUPPORTED / PAS 4 probe on DTB failure.
 """
 import pathlib, sys
 
@@ -151,11 +152,9 @@ def patch_gpupower(p: pathlib.Path):
         '    }\n'
         '    thread_wakeup(event_t(&gIrqCount));\n'
     )
-    grant_anchor = '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard");\n'
     restart_anchor = '        if (bootArg("fuxi-gpu-restart", 0)) native_adreno_set_restart(fuxiGpuRestart, nullptr);'
     assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
     assert t.count(irq_anchor) == 1, f'irq_anchor missing in {p}'
-    assert t.count(grant_anchor) == 1, f'grant_anchor missing in {p}'
     assert t.count(restart_anchor) == 1, f'restart_anchor missing in {p}'
     t = t.replace(
         decl_anchor,
@@ -171,34 +170,80 @@ def patch_gpupower(p: pathlib.Path):
         1,
     )
     t = t.replace(
-        grant_anchor,
-        '    accelerator->setProperty("NativeSandboxGrantProcess", "*");\n',
-        1,
-    )
-    t = t.replace(
         restart_anchor,
         '        if (bootArg("fuxi-gpu-restart", 1)) native_adreno_set_restart(fuxiGpuRestart, nullptr);',
         1,
     )
     p.write_text(t)
-    print('patched GpuPowerProbe.cpp (irq + grant=* + restart=1):', p)
+    print('patched GpuPowerProbe.cpp (irq + restart=1, safe whitelist):', p)
 
-def patch_sandbox_grant(p: pathlib.Path):
+def patch_fwslot(p: pathlib.Path):
     t = p.read_text()
-    old = '+	if (!list) {\n+		return false;\n+	}\n'
-    new = '+	if (!list) {\n+		return false;\n+	}\n+	if (list->getCStringNoCopy()[0] == \'*\') {\n+		return true;\n+	}\n'
-    if "getCStringNoCopy()[0] == '*'" in t:
+    if 'fuxi-fw-slot' in t:
         print('already patched:', p)
         return
-    assert t.count(old) == 1, f'sandbox grant anchor missing in {p}'
-    t = t.replace(old, new, 1)
-    # Adjust hunk header line count from +4325,36 to +4325,39
-    t = t.replace('@@ -4325,6 +4325,36 @@', '@@ -4325,6 +4325,39 @@', 1)
-    t = t.replace('@@ -4353,7 +4383,7 @@', '@@ -4353,7 +4386,7 @@', 1)
-    t = t.replace('@@ -4512,7 +4542,9 @@', '@@ -4512,7 +4545,9 @@', 1)
-    t = t.replace('@@ -4520,6 +4552,7 @@', '@@ -4520,6 +4555,7 @@', 1)
+    inc_anchor = '#include <string.h>\n'
+    names_anchor = '    static const char *const names[] = {"modem_a", "modem_b"};\n'
+    assert t.count(inc_anchor) == 1, f'inc_anchor missing in {p}'
+    assert t.count(names_anchor) == 1, f'names_anchor missing in {p}'
+    t = t.replace(inc_anchor, inc_anchor + '#include <pexpert/pexpert.h>\n', 1)
+    t = t.replace(
+        names_anchor,
+        '    char slot[8] = {};\n'
+        '    const bool wantB = PE_parse_boot_argn("fuxi-fw-slot", slot, sizeof slot) && (slot[0] == \'b\' || slot[0] == \'B\');\n'
+        '    const char *const names[] = {wantB ? "modem_b" : "modem_a", wantB ? "modem_a" : "modem_b"};\n',
+        1,
+    )
     p.write_text(t)
-    print('patched zzw-native-adreno-sandbox-grant.patch:', p)
+    print('patched FuxiAdspFirmware.cpp (fuxi-fw-slot=b):', p)
+
+def patch_modem(p: pathlib.Path):
+    t = p.read_text()
+    if 'fuxi modem auth:' in t:
+        print('already patched:', p)
+        return
+    auth_anchor = (
+        '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
+        '    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
+        '    if (image.mdt.relocatable && !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))\n'
+        '        return -2;\n'
+        '    return 0;\n'
+    )
+    assert t.count(auth_anchor) == 1, f'auth_anchor missing in {p}'
+    auth_new = (
+        '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
+        '    const QcomMdtSegment &hs = image.mdt.segment[image.mdt.hash];\n'
+        '    uint32_t w0 = 0, w1 = 0, h0 = 0, h1 = 0;\n'
+        '    if (bytes >= 8) {memcpy(&w0, va, 4); memcpy(&w1, va + 4, 4);}\n'
+        '    if (bytes >= image.mdt.header_size + 8) {memcpy(&h0, va + image.mdt.header_size, 4); memcpy(&h1, va + image.mdt.header_size + 4, 4);}\n'
+        '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
+        '    IOLog("fuxi modem auth: pas=0x%x phys=0x%llx bytes=%llu hdr=%llu hash[%u]=0x%llx+%llu reloc=%u span=0x%llx elf=%08x/%08x hash=%08x/%08x init=0x%llx(%lld)/0x%llx\\n",\n'
+        '          pas, phys, bytes, image.mdt.header_size, image.mdt.hash, hs.file_offset, hs.file_size, image.mdt.relocatable,\n'
+        '          qcom_mdt_span(&image.mdt), w0, w1, h0, h1, (unsigned long long)rInit.x0, (long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '    if (!scmOk(rInit)) {\n'
+        '        if (pas == kPasDtb) {\n'
+        '            const ScmResult sDtb = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), kPasDtb, 0, 0);\n'
+        '            const ScmResult sMpss = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), kPasMpss, 0, 0);\n'
+        '            IOLog("fuxi modem auth: supported dtb=0x%llx/0x%llx mpss=0x%llx/0x%llx\\n",\n'
+        '                  (unsigned long long)sDtb.x0, (unsigned long long)sDtb.x1, (unsigned long long)sMpss.x0, (unsigned long long)sMpss.x1);\n'
+        '            const int mpssRc = authenticateHeader(gMpssImage, kPasMpss, kMpssBase);\n'
+        '            IOLog("fuxi modem auth: probe mpss rc=%d\\n", mpssRc);\n'
+        '            if (!mpssRc) scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasMpss, 0, 0);\n'
+        '            native_modem_stats[12] = (int32_t)rInit.x0; native_modem_stats[13] = (int32_t)rInit.x1;\n'
+        '        }\n'
+        '        return -1;\n'
+        '    }\n'
+        '    if (image.mdt.relocatable) {\n'
+        '        const ScmResult rMem = scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt));\n'
+        '        IOLog("fuxi modem auth: pas=0x%x mem_setup base=0x%llx span=0x%llx x0=0x%llx/0x%llx\\n",\n'
+        '              pas, base, qcom_mdt_span(&image.mdt), (unsigned long long)rMem.x0, (unsigned long long)rMem.x1);\n'
+        '        if (!scmOk(rMem)) return -2;\n'
+        '    }\n'
+        '    return 0;\n'
+    )
+    t = t.replace(auth_anchor, auth_new, 1)
+    p.write_text(t)
+    print('patched ModemProbe.cpp (auth diagnostics):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -207,5 +252,6 @@ if __name__ == '__main__':
         if mode == 'watchdog': patch_watchdog(p)
         elif mode == 'backlight': patch_backlight(p)
         elif mode == 'gpupower': patch_gpupower(p)
-        elif mode == 'sandbox': patch_sandbox_grant(p)
+        elif mode == 'fwslot': patch_fwslot(p)
+        elif mode == 'modem': patch_modem(p)
         else: raise SystemExit(f'unknown mode {mode}')
