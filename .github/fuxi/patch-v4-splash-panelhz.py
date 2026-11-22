@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Minimal v4/v5/v7 enhancements:
+"""Minimal v4/v5/v8 enhancements:
 1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
 2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe + optional fuxi-panel-hz=60|90|120.
 3) GpuPowerProbe.cpp:
    - upstream native_adreno_gpu_interrupt(status) in gpuIrq()
-   - default fuxi-gpu-restart=1 so hangcheck automatically resets & replays on any stall/fault
-   (Safe NativeSandboxGrantProcess whitelist preserved; no "*" wildcard.)
+   - default fuxi-gpu-restart=1 (safe NativeSandboxGrantProcess whitelist preserved)
 4) FuxiAdspFirmware.cpp:
-   - optional fuxi-fw-slot=b boot-arg to mount modem_b before modem_a (default stays modem_a).
-5) ModemProbe.cpp:
-   - diagnostic logging in authenticateHeader() (pas/phys/bytes/mdt/hash/scm) + PAS_IS_SUPPORTED / PAS 4 probe on DTB failure.
+   - optional fuxi-fw-slot=b boot-arg to mount modem_b before modem_a
+5) AdspProbe.cpp:
+   - log phys/bytes on PAS_INIT_IMAGE for apples-to-apples comparison with ModemProbe
+6) ModemProbe.cpp:
+   - scan PAS_IS_SUPPORTED(0..42)
+   - allocate metadata < 4 GiB (0xffffffff -> 0xfffff000 mask, 4KiB rounded) with fallback to 64-bit mask
+   - log full auth diagnostics + test PAS_INIT_IMAGE before assignDsm
 """
 import pathlib, sys
 
@@ -175,7 +178,7 @@ def patch_gpupower(p: pathlib.Path):
         1,
     )
     p.write_text(t)
-    print('patched GpuPowerProbe.cpp (irq + restart=1, safe whitelist):', p)
+    print('patched GpuPowerProbe.cpp:', p)
 
 def patch_fwslot(p: pathlib.Path):
     t = p.read_text()
@@ -195,40 +198,66 @@ def patch_fwslot(p: pathlib.Path):
         1,
     )
     p.write_text(t)
-    print('patched FuxiAdspFirmware.cpp (fuxi-fw-slot=b):', p)
+    print('patched FuxiAdspFirmware.cpp:', p)
+
+def patch_adsp(p: pathlib.Path):
+    t = p.read_text()
+    if 'fuxi adsp auth:' in t:
+        print('already patched:', p)
+        return
+    anchor = '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
+    assert t.count(anchor) == 1, f'adsp auth anchor missing in {p}'
+    repl = (
+        '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
+        '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
+        '    IOLog("fuxi adsp auth: pas=0x%x phys=0x%llx bytes=%llu init=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '    if (!scmOk(rInit)) return -1;\n'
+    )
+    t = t.replace(anchor, repl, 1)
+    p.write_text(t)
+    print('patched AdspProbe.cpp:', p)
 
 def patch_modem(p: pathlib.Path):
     t = p.read_text()
     if 'fuxi modem auth:' in t:
         print('already patched:', p)
         return
-    auth_anchor = (
+    alloc_anchor = (
+        '    const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);\n'
+        '    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0xfffffffffffff000ull);\n'
+        '    if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;\n'
+        '    uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());\n'
+        '    if (qcom_mdt_metadata(&image.mdt, fileRead, image.file, va, bytes)) return -5;\n'
+        '    cleanToPoc(va, bytes);\n'
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
         '    if (image.mdt.relocatable && !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))\n'
         '        return -2;\n'
         '    return 0;\n'
     )
-    assert t.count(auth_anchor) == 1, f'auth_anchor missing in {p}'
-    auth_new = (
+    assert t.count(alloc_anchor) == 1, f'alloc_anchor missing in {p}'
+    alloc_new = (
+        '    const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);\n'
+        '    const uint64_t allocBytes = (bytes + 0xfff) & ~0xfffull;\n'
+        '    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, allocBytes, 0x00000000fffff000ull);\n'
+        '    if (!image.meta) image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, allocBytes, 0xfffffffffffff000ull);\n'
+        '    if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;\n'
+        '    uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());\n'
+        '    bzero(va, allocBytes);\n'
+        '    if (qcom_mdt_metadata(&image.mdt, fileRead, image.file, va, bytes)) return -5;\n'
+        '    cleanToPoc(va, allocBytes);\n'
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
-        '    const QcomMdtSegment &hs = image.mdt.segment[image.mdt.hash];\n'
-        '    uint32_t w0 = 0, w1 = 0, h0 = 0, h1 = 0;\n'
-        '    if (bytes >= 8) {memcpy(&w0, va, 4); memcpy(&w1, va + 4, 4);}\n'
-        '    if (bytes >= image.mdt.header_size + 8) {memcpy(&h0, va + image.mdt.header_size, 4); memcpy(&h1, va + image.mdt.header_size + 4, 4);}\n'
         '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    IOLog("fuxi modem auth: pas=0x%x phys=0x%llx bytes=%llu hdr=%llu hash[%u]=0x%llx+%llu reloc=%u span=0x%llx elf=%08x/%08x hash=%08x/%08x init=0x%llx(%lld)/0x%llx\\n",\n'
-        '          pas, phys, bytes, image.mdt.header_size, image.mdt.hash, hs.file_offset, hs.file_size, image.mdt.relocatable,\n'
-        '          qcom_mdt_span(&image.mdt), w0, w1, h0, h1, (unsigned long long)rInit.x0, (long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '    IOLog("fuxi modem auth: pas=0x%x phys=0x%llx bytes=%llu(%llu) init=0x%llx(%lld)/0x%llx\\n",\n'
+        '          pas, phys, bytes, allocBytes, (unsigned long long)rInit.x0, (long long)rInit.x0, (unsigned long long)rInit.x1);\n'
         '    if (!scmOk(rInit)) {\n'
         '        if (pas == kPasDtb) {\n'
-        '            const ScmResult sDtb = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), kPasDtb, 0, 0);\n'
-        '            const ScmResult sMpss = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), kPasMpss, 0, 0);\n'
-        '            IOLog("fuxi modem auth: supported dtb=0x%llx/0x%llx mpss=0x%llx/0x%llx\\n",\n'
-        '                  (unsigned long long)sDtb.x0, (unsigned long long)sDtb.x1, (unsigned long long)sMpss.x0, (unsigned long long)sMpss.x1);\n'
-        '            const int mpssRc = authenticateHeader(gMpssImage, kPasMpss, kMpssBase);\n'
-        '            IOLog("fuxi modem auth: probe mpss rc=%d\\n", mpssRc);\n'
-        '            if (!mpssRc) scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), kPasMpss, 0, 0);\n'
+        '            char sup[160] = {}; size_t pos = 0;\n'
+        '            for (uint32_t id = 0; id <= 42; ++id) {\n'
+        '                const ScmResult s = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), id, 0, 0);\n'
+        '                if (s.x0 == 0 && s.x1 != 0 && pos + 8 < sizeof sup) pos += (size_t)snprintf(sup + pos, sizeof sup - pos, "%u ", id);\n'
+        '            }\n'
+        '            IOLog("fuxi modem pas_supported(0..42): [%s]\\n", sup);\n'
         '            native_modem_stats[12] = (int32_t)rInit.x0; native_modem_stats[13] = (int32_t)rInit.x1;\n'
         '        }\n'
         '        return -1;\n'
@@ -241,9 +270,9 @@ def patch_modem(p: pathlib.Path):
         '    }\n'
         '    return 0;\n'
     )
-    t = t.replace(auth_anchor, auth_new, 1)
+    t = t.replace(alloc_anchor, alloc_new, 1)
     p.write_text(t)
-    print('patched ModemProbe.cpp (auth diagnostics):', p)
+    print('patched ModemProbe.cpp (v8 32-bit meta + pas_supported scan):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -253,5 +282,6 @@ if __name__ == '__main__':
         elif mode == 'backlight': patch_backlight(p)
         elif mode == 'gpupower': patch_gpupower(p)
         elif mode == 'fwslot': patch_fwslot(p)
+        elif mode == 'adsp': patch_adsp(p)
         elif mode == 'modem': patch_modem(p)
         else: raise SystemExit(f'unknown mode {mode}')
