@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Minimal v4/v5 enhancements:
+"""Minimal v4/v5/v6 enhancements:
 1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
 2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe (INTF_FRAME_COUNT + INTF_TEAR_INT_COUNT_VAL)
    + optional fuxi-panel-hz=60|90|120 Xiaomi 13 m3_38_0c_0a HS DCS timing switch (default 0 = off).
-3) GpuPowerProbe.cpp: upstream UniXNU-sheng/package/GpuPowerProbe.cpp:739 native_adreno_gpu_interrupt(status)
-   call in gpuIrq() so Adreno740's interrupt-driven fence completion pass wakes waiters immediately.
+3) GpuPowerProbe.cpp:
+   - upstream UniXNU-sheng/package/GpuPowerProbe.cpp:739 native_adreno_gpu_interrupt(status) in gpuIrq()
+   - default fuxi-gpu-restart=1 so hangcheck automatically resets & replays on any stall/fault
+   - grant all Metal clients in NativeSandboxGrantProcess ("*")
+4) zzw-native-adreno-sandbox-grant.patch:
+   - support "*" wildcard in NativeSandboxGrantProcess and honor client->getProperty("NativeSandboxGrant")
 """
 import pathlib, sys
 
@@ -90,7 +94,6 @@ void fuxiPanelHzThread(void *, wait_result_t) {
     unsigned targetHz = 0;
     PE_parse_boot_argn("fuxi-panel-hz", &targetHz, sizeof(targetHz));
     if ((targetHz == 60 || targetHz == 90 || targetHz == 120) && gDsi.va && !gDsiHalt) {
-        // Xiaomi 13 m3_38_0c_0a sec cmd mode dsc dsi panel HS timing-switch packets (from fuxi.dtb)
         const uint32_t v60 = targetHz == 120 ? 0x00u : 0x08u;
         const uint32_t vbd = targetHz == 90 ? 0x01u : 0x04u;
         const uint32_t vf2 = targetHz == 90 ? 0x88u : 0x70u;
@@ -148,8 +151,12 @@ def patch_gpupower(p: pathlib.Path):
         '    }\n'
         '    thread_wakeup(event_t(&gIrqCount));\n'
     )
+    grant_anchor = '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard");\n'
+    restart_anchor = '        if (bootArg("fuxi-gpu-restart", 0)) native_adreno_set_restart(fuxiGpuRestart, nullptr);'
     assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
     assert t.count(irq_anchor) == 1, f'irq_anchor missing in {p}'
+    assert t.count(grant_anchor) == 1, f'grant_anchor missing in {p}'
+    assert t.count(restart_anchor) == 1, f'restart_anchor missing in {p}'
     t = t.replace(
         decl_anchor,
         decl_anchor + 'extern "C" void native_adreno_gpu_interrupt(uint32_t status) __attribute__((weak));   // NativeAdrenoPublish.cpp: asks for the completion pass\n',
@@ -163,8 +170,35 @@ def patch_gpupower(p: pathlib.Path):
         '    thread_wakeup(event_t(&gIrqCount));\n',
         1,
     )
+    t = t.replace(
+        grant_anchor,
+        '    accelerator->setProperty("NativeSandboxGrantProcess", "*");\n',
+        1,
+    )
+    t = t.replace(
+        restart_anchor,
+        '        if (bootArg("fuxi-gpu-restart", 1)) native_adreno_set_restart(fuxiGpuRestart, nullptr);',
+        1,
+    )
     p.write_text(t)
-    print('patched GpuPowerProbe.cpp:', p)
+    print('patched GpuPowerProbe.cpp (irq + grant=* + restart=1):', p)
+
+def patch_sandbox_grant(p: pathlib.Path):
+    t = p.read_text()
+    old = '+	if (!list) {\n+		return false;\n+	}\n'
+    new = '+	if (!list) {\n+		return false;\n+	}\n+	if (list->getCStringNoCopy()[0] == \'*\') {\n+		return true;\n+	}\n'
+    if "getCStringNoCopy()[0] == '*'" in t:
+        print('already patched:', p)
+        return
+    assert t.count(old) == 1, f'sandbox grant anchor missing in {p}'
+    t = t.replace(old, new, 1)
+    # Adjust hunk header line count from +4325,36 to +4325,39
+    t = t.replace('@@ -4325,6 +4325,36 @@', '@@ -4325,6 +4325,39 @@', 1)
+    t = t.replace('@@ -4353,7 +4383,7 @@', '@@ -4353,7 +4386,7 @@', 1)
+    t = t.replace('@@ -4512,7 +4542,9 @@', '@@ -4512,7 +4545,9 @@', 1)
+    t = t.replace('@@ -4520,6 +4552,7 @@', '@@ -4520,6 +4555,7 @@', 1)
+    p.write_text(t)
+    print('patched zzw-native-adreno-sandbox-grant.patch:', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -173,4 +207,5 @@ if __name__ == '__main__':
         if mode == 'watchdog': patch_watchdog(p)
         elif mode == 'backlight': patch_backlight(p)
         elif mode == 'gpupower': patch_gpupower(p)
+        elif mode == 'sandbox': patch_sandbox_grant(p)
         else: raise SystemExit(f'unknown mode {mode}')
