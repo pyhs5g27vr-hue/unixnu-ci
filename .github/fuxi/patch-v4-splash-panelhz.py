@@ -245,21 +245,17 @@ def patch_modem(p: pathlib.Path):
     print('modem patch skipped in v14 (no unsafe IMEM read):', p)
 
 def patch_submit(p: pathlib.Path):
+    import re
     t = p.read_text()
-    if 'v14b fast idle-CP unstick' in t:
+    if 'v14c fast idle-CP unstick' in t:
         print('already patched:', p)
         return
     a_snap = '    const uint32_t want=pending>=1000000?2:pending>=50000?1:0;\n'
-    a_work = '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,50000)) {\n'
-    a_kick = '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,50000)) {\n'
     assert t.count(a_snap) == 1, f'a_snap missing in {p}'
-    assert t.count(a_work) == 1, f'a_work missing in {p}'
-    assert t.count(a_kick) == 1, f'a_kick missing in {p}'
-    t = t.replace(a_snap, '    // v14b fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls\n    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;\n', 1)
-    t = t.replace(a_work, '    if(now && clock && clock->now_us && stage_due(stall_stage,0,pending,15000)) {\n', 1)
-    t = t.replace(a_kick, '    if(!working && now && stage_due(stall_stage,0,now-stall_began_us,15000)) {\n', 1)
-    p.write_text(t)
-    print('patched NativeAdrenoSubmit.cpp (v14b: 15ms idle-CP unstick + 500ms ibdump threshold):', p)
+    t = t.replace(a_snap, '    // v14c fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls\n    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;\n', 1)
+    t2, n = re.subn(r'stage_due\(stall_stage,\s*0,([^,]+),\s*50000\)', r'stage_due(stall_stage,0,\1,15000)', t)
+    print(f'patched {p}: snapshot_due=500ms, stage_due(0,50000->15000) hits={n}')
+    p.write_text(t2)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
