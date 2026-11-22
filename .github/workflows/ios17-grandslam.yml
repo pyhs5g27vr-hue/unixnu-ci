@@ -356,6 +356,11 @@ jobs:
           PY
           done
 
+      - name: wifi fast join (first scan after a join asks that channel alone)
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/wifi-fastjoin.py" "$GITHUB_WORKSPACE"
+
       - name: uefi-fuxi (pinned fuxi.dtb)
         run: |
           git clone -q --filter=blob:none https://github.com/ljhhkx529/uefi-fuxi.git uefi-fuxi
