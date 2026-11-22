@@ -557,6 +557,19 @@ jobs:
           done
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
           cp "$RUNNER_TEMP/fuxi-plugin.py" scripts/build-adreno-metal-plugin.py
+          # Minimal GpuScanoutPresenter.h optimizations: kSources 4->6 (match kernel 6 mappings) + 32x8 dual-wave dispatch
+          python3 - <<'PGSP'
+          from pathlib import Path
+          gp = Path('drivers/AdrenoMetal/GpuScanoutPresenter.h')
+          s = gp.read_text()
+          s1 = 'static constexpr unsigned kSources = 4;'
+          s2 = '[encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + 15) / 16, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(16, 8, 1)];'
+          assert s.count(s1) == 1 and s.count(s2) == 1, (s.count(s1), s.count(s2))
+          s = s.replace(s1, 'static constexpr unsigned kSources = 6;', 1)
+          s = s.replace(s2, 'const NSUInteger tw = scale_.maxTotalThreadsPerThreadgroup >= 256 ? 32 : 16; [encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + tw - 1) / tw, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(tw, 8, 1)];', 1)
+          gp.write_text(s)
+          print('GpuScanoutPresenter.h: kSources=6 + 32x8 dispatch patched')
+          PGSP
           # Add 0065-fuxi-ios-read-pages.patch (if not already present) for ios17e translator 46e7cc96
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0065-fuxi-ios-read-pages.patch" drivers/AdrenoMetal/bridge/patches/
           python3 - <<'P65'
