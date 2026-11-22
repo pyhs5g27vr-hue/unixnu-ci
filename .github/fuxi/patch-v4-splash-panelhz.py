@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Minimal v4/v5/v8 enhancements:
+"""Grand-Slam v9 enhancements:
 1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
 2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe + optional fuxi-panel-hz=60|90|120.
 3) GpuPowerProbe.cpp:
    - upstream native_adreno_gpu_interrupt(status) in gpuIrq()
-   - default fuxi-gpu-restart=1 (safe NativeSandboxGrantProcess whitelist preserved)
-4) FuxiAdspFirmware.cpp:
-   - optional fuxi-fw-slot=b boot-arg to mount modem_b before modem_a
-5) AdspProbe.cpp:
-   - log phys/bytes on PAS_INIT_IMAGE for apples-to-apples comparison with ModemProbe
-6) ModemProbe.cpp:
-   - scan PAS_IS_SUPPORTED(0..42)
-   - allocate metadata < 4 GiB (0xffffffff -> 0xfffff000 mask, 4KiB rounded) with fallback to 64-bit mask
-   - log full auth diagnostics + test PAS_INIT_IMAGE before assignDsm
+   - default fuxi-gpu-restart=1
+   - expanded SAFE foreground-app Metal whitelist (adds SpringBoard,Preferences,MobileSafari,MobileSlideShow,MobileNotes,MobileCal; excludes mediaserverd/daemons)
+4) ShengBattery.cpp:
+   - publish MaximumCapacityPercent + NominalChargeCapacity inside BatteryData (using real ADSP full_mah/design_mah, e.g. 4400/4500 = 98%)
+5) FuxiAdspFirmware.cpp:
+   - optional fuxi-fw-slot=b boot-arg
+6) AdspProbe.cpp:
+   - log phys/bytes on PAS_INIT_IMAGE
+7) ModemProbe.cpp:
+   - test Linux qcom_pas_load() order: PAS_INIT_IMAGE(0x26) BEFORE rails/assignDsm
+   - if still rejected, retry after PAS_SHUTDOWN(0x26/4) and test QCOM_SCM_RO arginfo
 """
 import pathlib, sys
 
@@ -155,9 +157,11 @@ def patch_gpupower(p: pathlib.Path):
         '    }\n'
         '    thread_wakeup(event_t(&gIrqCount));\n'
     )
+    grant_anchor = '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard");\n'
     restart_anchor = '        if (bootArg("fuxi-gpu-restart", 0)) native_adreno_set_restart(fuxiGpuRestart, nullptr);'
     assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
     assert t.count(irq_anchor) == 1, f'irq_anchor missing in {p}'
+    assert t.count(grant_anchor) == 1, f'grant_anchor missing in {p}'
     assert t.count(restart_anchor) == 1, f'restart_anchor missing in {p}'
     t = t.replace(
         decl_anchor,
@@ -173,12 +177,55 @@ def patch_gpupower(p: pathlib.Path):
         1,
     )
     t = t.replace(
+        grant_anchor,
+        '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard,SpringBoard,Preferences,MobileSafari,MobileSlideShow,MobileNotes,MobileCal");\n',
+        1,
+    )
+    t = t.replace(
         restart_anchor,
         '        if (bootArg("fuxi-gpu-restart", 1)) native_adreno_set_restart(fuxiGpuRestart, nullptr);',
         1,
     )
     p.write_text(t)
-    print('patched GpuPowerProbe.cpp:', p)
+    print('patched GpuPowerProbe.cpp (irq + safe foreground Metal whitelist + restart=1):', p)
+
+def patch_battery(p: pathlib.Path):
+    t = p.read_text()
+    if 'MaximumCapacityPercent' in t:
+        print('already patched:', p)
+        return
+    anchor = (
+        '        if (OSDictionary *data = OSDictionary::withCapacity(6)) {\n'
+        '            auto put = [&](const char *key, int64_t value) {\n'
+        '                if (OSNumber *n = OSNumber::withNumber((unsigned long long)value, 32)) {data->setObject(key, n); n->release();}\n'
+        '            };\n'
+        '            put("StateOfCharge", s.percent);\n'
+        '            if (s.raw_mah > 0) put("RaRawCurrentCapacity", s.raw_mah);\n'
+        '            if (s.full_mah > 0) put("Qmax", s.full_mah);\n'
+        '            if (s.design_mah > 0) put("DesignCapacity", s.design_mah);\n'
+        '            if (s.cycles > 0) put("CycleCount", s.cycles);\n'
+        '            if (s.voltage_mv > 0) put("Voltage", s.voltage_mv);\n'
+    )
+    assert t.count(anchor) == 1, f'battery anchor missing in {p}'
+    repl = (
+        '        const int64_t designMah = s.design_mah > 0 ? s.design_mah : 4500;\n'
+        '        const int64_t healthPct = (s.full_mah > 0 && designMah > 0) ? (s.full_mah * 100 / designMah > 100 ? 100 : s.full_mah * 100 / designMah) : 0;\n'
+        '        if (healthPct > 0) number("MaximumCapacityPercent", healthPct);\n'
+        '        if (OSDictionary *data = OSDictionary::withCapacity(10)) {\n'
+        '            auto put = [&](const char *key, int64_t value) {\n'
+        '                if (OSNumber *n = OSNumber::withNumber((unsigned long long)value, 32)) {data->setObject(key, n); n->release();}\n'
+        '            };\n'
+        '            put("StateOfCharge", s.percent);\n'
+        '            if (s.raw_mah > 0) put("RaRawCurrentCapacity", s.raw_mah);\n'
+        '            if (s.full_mah > 0) {put("Qmax", s.full_mah); put("NominalChargeCapacity", s.full_mah);}\n'
+        '            put("DesignCapacity", designMah);\n'
+        '            if (healthPct > 0) put("MaximumCapacityPercent", healthPct);\n'
+        '            if (s.cycles > 0) put("CycleCount", s.cycles);\n'
+        '            if (s.voltage_mv > 0) put("Voltage", s.voltage_mv);\n'
+    )
+    t = t.replace(anchor, repl, 1)
+    p.write_text(t)
+    print('patched ShengBattery.cpp (MaximumCapacityPercent + BatteryData):', p)
 
 def patch_fwslot(p: pathlib.Path):
     t = p.read_text()
@@ -219,60 +266,74 @@ def patch_adsp(p: pathlib.Path):
 
 def patch_modem(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi modem auth:' in t:
+    if 'fuxi modem v9:' in t:
         print('already patched:', p)
         return
-    alloc_anchor = (
-        '    const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);\n'
-        '    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0xfffffffffffff000ull);\n'
-        '    if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;\n'
-        '    uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());\n'
-        '    if (qcom_mdt_metadata(&image.mdt, fileRead, image.file, va, bytes)) return -5;\n'
-        '    cleanToPoc(va, bytes);\n'
+    auth_anchor = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
         '    if (image.mdt.relocatable && !scmOk(scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt))))\n'
         '        return -2;\n'
         '    return 0;\n'
     )
-    assert t.count(alloc_anchor) == 1, f'alloc_anchor missing in {p}'
-    alloc_new = (
-        '    const uint64_t bytes = qcom_mdt_metadata_size(&image.mdt);\n'
-        '    const uint64_t allocBytes = (bytes + 0xfff) & ~0xfffull;\n'
-        '    image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, allocBytes, 0x00000000fffff000ull);\n'
-        '    if (!image.meta) image.meta = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, allocBytes, 0xfffffffffffff000ull);\n'
-        '    if (!image.meta || image.meta->prepare() != kIOReturnSuccess) return -12;\n'
-        '    uint8_t *va = static_cast<uint8_t *>(image.meta->getBytesNoCopy());\n'
-        '    bzero(va, allocBytes);\n'
-        '    if (qcom_mdt_metadata(&image.mdt, fileRead, image.file, va, bytes)) return -5;\n'
-        '    cleanToPoc(va, allocBytes);\n'
+    start_anchor = (
+        '    if ((rc = fuxi_adsp_qmp_request("{class: image, res: load_state, name: modem, val: on}", 3000))) {\n'
+        '        fail(StLoadState, rc); release(gDtbImage); release(gMpssImage); return false;\n'
+        '    }\n'
+        '    stage(StLoadState);\n'
+        '    if ((rc = rails())) {fail(StRails, rc); release(gDtbImage); release(gMpssImage); return false;}\n'
+        '    stage(StRails);\n'
+        '    if ((rc = assignDsm())) {fail(StDsm, rc); vote(0, 0); release(gDtbImage); release(gMpssImage); return false;}\n'
+        '    stage(StDsm);\n'
+        '\n'
+        '    if ((rc = authenticateHeader(gDtbImage, kPasDtb, kDtbBase)) || (rc = loadSegments(gDtbImage, kDtbBase, kDtbSize)) ||\n'
+        '        (rc = scmOk(scm(QCOM_SCM_PAS_AUTH_AND_RESET, qcom_scm_args(1, 0, 0, 0), kPasDtb, 0, 0)) ? 0 : -3)) {\n'
+        '        fail(StDtb, rc); vote(0, 0); release(gDtbImage); release(gMpssImage); return false;\n'
+        '    }\n'
+    )
+    assert t.count(auth_anchor) == 1, f'auth_anchor missing in {p}'
+    assert t.count(start_anchor) == 1, f'start_anchor missing in {p}'
+    auth_new = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
-        '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    IOLog("fuxi modem auth: pas=0x%x phys=0x%llx bytes=%llu(%llu) init=0x%llx(%lld)/0x%llx\\n",\n'
-        '          pas, phys, bytes, allocBytes, (unsigned long long)rInit.x0, (long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '    ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
+        '    IOLog("fuxi modem v9: pas=0x%x phys=0x%llx bytes=%llu init_rw=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
         '    if (!scmOk(rInit)) {\n'
-        '        if (pas == kPasDtb) {\n'
-        '            char sup[160] = {}; size_t pos = 0;\n'
-        '            for (uint32_t id = 0; id <= 42; ++id) {\n'
-        '                const ScmResult s = scm(QCOM_SCM_PAS_IS_SUPPORTED, qcom_scm_args(1, QCOM_SCM_VAL, 0, 0), id, 0, 0);\n'
-        '                if (s.x0 == 0 && s.x1 != 0 && pos + 8 < sizeof sup) pos += (size_t)snprintf(sup + pos, sizeof sup - pos, "%u ", id);\n'
-        '            }\n'
-        '            IOLog("fuxi modem pas_supported(0..42): [%s]\\n", sup);\n'
-        '            native_modem_stats[12] = (int32_t)rInit.x0; native_modem_stats[13] = (int32_t)rInit.x1;\n'
-        '        }\n'
-        '        return -1;\n'
+        '        const ScmResult rSd = scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), pas, 0, 0);\n'
+        '        const ScmResult rRo = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RO, 0), pas, phys, 0);\n'
+        '        rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
+        '        IOLog("fuxi modem v9: pas=0x%x after_sd=0x%llx ro=0x%llx/0x%llx retry_rw=0x%llx/0x%llx\\n",\n'
+        '              pas, (unsigned long long)rSd.x0, (unsigned long long)rRo.x0, (unsigned long long)rRo.x1, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '        if (!scmOk(rInit)) return -1;\n'
         '    }\n'
         '    if (image.mdt.relocatable) {\n'
         '        const ScmResult rMem = scm(QCOM_SCM_PAS_MEM_SETUP, qcom_scm_args(3, 0, 0, 0), pas, base, qcom_mdt_span(&image.mdt));\n'
-        '        IOLog("fuxi modem auth: pas=0x%x mem_setup base=0x%llx span=0x%llx x0=0x%llx/0x%llx\\n",\n'
-        '              pas, base, qcom_mdt_span(&image.mdt), (unsigned long long)rMem.x0, (unsigned long long)rMem.x1);\n'
+        '        IOLog("fuxi modem v9: pas=0x%x mem_setup=0x%llx/0x%llx\\n", pas, (unsigned long long)rMem.x0, (unsigned long long)rMem.x1);\n'
         '        if (!scmOk(rMem)) return -2;\n'
         '    }\n'
         '    return 0;\n'
     )
-    t = t.replace(alloc_anchor, alloc_new, 1)
+    start_new = (
+        '    // Linux qcom_pas_load() order: init+load DTB metadata BEFORE qcom_pas_start() votes/load_state/auth_and_reset.\n'
+        '    if ((rc = authenticateHeader(gDtbImage, kPasDtb, kDtbBase)) || (rc = loadSegments(gDtbImage, kDtbBase, kDtbSize))) {\n'
+        '        fail(StDtb, rc); release(gDtbImage); release(gMpssImage); return false;\n'
+        '    }\n'
+        '    if ((rc = fuxi_adsp_qmp_request("{class: image, res: load_state, name: modem, val: on}", 3000))) {\n'
+        '        fail(StLoadState, rc); release(gDtbImage); release(gMpssImage); return false;\n'
+        '    }\n'
+        '    stage(StLoadState);\n'
+        '    if ((rc = rails())) {fail(StRails, rc); release(gDtbImage); release(gMpssImage); return false;}\n'
+        '    stage(StRails);\n'
+        '    if ((rc = assignDsm())) {fail(StDsm, rc); vote(0, 0); release(gDtbImage); release(gMpssImage); return false;}\n'
+        '    stage(StDsm);\n'
+        '\n'
+        '    if ((rc = scmOk(scm(QCOM_SCM_PAS_AUTH_AND_RESET, qcom_scm_args(1, 0, 0, 0), kPasDtb, 0, 0)) ? 0 : -3)) {\n'
+        '        fail(StDtb, rc); vote(0, 0); release(gDtbImage); release(gMpssImage); return false;\n'
+        '    }\n'
+    )
+    t = t.replace(auth_anchor, auth_new, 1)
+    t = t.replace(start_anchor, start_new, 1)
     p.write_text(t)
-    print('patched ModemProbe.cpp (v8 32-bit meta + pas_supported scan):', p)
+    print('patched ModemProbe.cpp (v9 Linux load-before-start order + shutdown/RO probe):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -281,6 +342,7 @@ if __name__ == '__main__':
         if mode == 'watchdog': patch_watchdog(p)
         elif mode == 'backlight': patch_backlight(p)
         elif mode == 'gpupower': patch_gpupower(p)
+        elif mode == 'battery': patch_battery(p)
         elif mode == 'fwslot': patch_fwslot(p)
         elif mode == 'adsp': patch_adsp(p)
         elif mode == 'modem': patch_modem(p)
