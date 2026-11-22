@@ -1,5 +1,5 @@
 diff --git a/crates/metal2vulkan-runtime/src/copied.rs b/crates/metal2vulkan-runtime/src/copied.rs
-index d303f93..1224510 100644
+index a1b7f3e..117a138 100644
 --- a/crates/metal2vulkan-runtime/src/copied.rs
 +++ b/crates/metal2vulkan-runtime/src/copied.rs
 @@ -1073,9 +1073,45 @@ unsafe impl Sync for HostBlock {}
@@ -61,22 +61,3 @@ index d303f93..1224510 100644
              std::ptr::copy_nonoverlapping(copy.add(at), was.as_mut_ptr(), span);
          }
          let (fresh, held) = (&now[..span], &was[..span]);
-@@ -2638,7 +2676,8 @@ pub(crate) unsafe fn read_caller(
-         return false;
-     }
-     // SAFETY: the bytes are mapped readable (the caller's); `into` is the runtime's own, apart.
--    unsafe { std::ptr::copy_nonoverlapping(pages.as_ptr(), into.as_mut_ptr(), into.len()) };
-+    // The pages may be a cache-inhibited mapping: copy_page_bytes' word loads.
-+    unsafe { copy_page_bytes(pages.as_ptr(), into.as_mut_ptr(), into.len()) };
-     true
- }
- 
-@@ -2670,7 +2709,7 @@ pub(crate) fn read_pages(pages: NonNull<u8>, into: &mut [u8]) -> bool {
- }
- 
- /// [`read_pages`] on macOS.
--#[cfg(target_os = "macos")]
-+#[cfg(any(target_os = "macos", target_os = "ios"))]
- pub(crate) fn read_pages(pages: NonNull<u8>, into: &mut [u8]) -> bool {
-     unsafe extern "C" {
-         /// `<mach/mach_init.h>`: the port of this process's task.
