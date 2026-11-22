@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Grand-Slam v10 enhancements:
-1) BootWatchdogPolicy.c: fuxi-splash-reset=1 one-shot rename of stale SplashBoard/Snapshots.
-2) AppleARMBacklight.cpp: read-only MDSS DPU panel Hz probe + optional fuxi-panel-hz=60|90|120.
+"""Grand-Slam v11:
+1) BootWatchdogPolicy.c: fuxi-splash-reset=1.
+2) AppleARMBacklight.cpp: fuxi-panel-hz=60|90|120.
 3) GpuPowerProbe.cpp:
    - upstream native_adreno_gpu_interrupt(status) in gpuIrq()
    - default fuxi-gpu-restart=1
-   - SAFE upstream 4-process Metal whitelist preserved (NO SpringBoard, NO "*")
+   - SAFE Metal whitelist: 4 proven system procs + 3 user apps (Preferences,MobileSafari,MobileSlideShow) — NO SpringBoard, NO mediaserverd!
 4) FuxiAdspFirmware.cpp:
-   - optional fuxi-fw-slot=b boot-arg
-5) AdspProbe.cpp:
-   - dump first 64 bytes (16 u32s) of adsp_dtb MBN v7 hash header + phys/bytes for direct comparison
-6) ModemProbe.cpp:
-   - dump first 64 bytes (16 u32s) of modem_dtb MBN v7 hash header
-   - probe cdsp_dtb (PAS 0x25) via PAS_INIT_IMAGE as a 3rd-party control (if cdsp_dtb passes, issue is MPSS-specific!)
+   - optional fuxi-fw-slot=b
+   - export fuxi_modem_list_image() to list modem/spss/ipa/dtb filenames in modem_a:/image/
+5) ModemProbe.cpp:
+   - on PAS_INIT_IMAGE(0x26) failure, call fuxi_modem_list_image() AND scan SM8550 IMEM (0x14680000+0x2c000) for tzbsp_diag / ASCII TZ error log!
 """
 import pathlib, sys
 
@@ -155,9 +153,11 @@ def patch_gpupower(p: pathlib.Path):
         '    }\n'
         '    thread_wakeup(event_t(&gIrqCount));\n'
     )
+    grant_anchor = '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard");\n'
     restart_anchor = '        if (bootArg("fuxi-gpu-restart", 0)) native_adreno_set_restart(fuxiGpuRestart, nullptr);'
     assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
     assert t.count(irq_anchor) == 1, f'irq_anchor missing in {p}'
+    assert t.count(grant_anchor) == 1, f'grant_anchor missing in {p}'
     assert t.count(restart_anchor) == 1, f'restart_anchor missing in {p}'
     t = t.replace(
         decl_anchor,
@@ -173,22 +173,29 @@ def patch_gpupower(p: pathlib.Path):
         1,
     )
     t = t.replace(
+        grant_anchor,
+        '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard,Preferences,MobileSafari,MobileSlideShow");\n',
+        1,
+    )
+    t = t.replace(
         restart_anchor,
         '        if (bootArg("fuxi-gpu-restart", 1)) native_adreno_set_restart(fuxiGpuRestart, nullptr);',
         1,
     )
     p.write_text(t)
-    print('patched GpuPowerProbe.cpp (safe 4-proc whitelist + irq + restart=1):', p)
+    print('patched GpuPowerProbe.cpp (safe 4+3 user apps whitelist, NO SpringBoard):', p)
 
 def patch_fwslot(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi-fw-slot' in t:
+    if 'fuxi_modem_probe_files' in t:
         print('already patched:', p)
         return
     inc_anchor = '#include <string.h>\n'
     names_anchor = '    static const char *const names[] = {"modem_a", "modem_b"};\n'
+    end_anchor = 'extern "C" void sheng_fw_close(void *handle) {\n    if (handle) IOFree(handle, sizeof(ModemImage));\n}\n'
     assert t.count(inc_anchor) == 1, f'inc_anchor missing in {p}'
     assert t.count(names_anchor) == 1, f'names_anchor missing in {p}'
+    assert t.count(end_anchor) == 1, f'end_anchor missing in {p}'
     t = t.replace(inc_anchor, inc_anchor + '#include <pexpert/pexpert.h>\n', 1)
     t = t.replace(
         names_anchor,
@@ -197,12 +204,29 @@ def patch_fwslot(p: pathlib.Path):
         '    const char *const names[] = {wantB ? "modem_b" : "modem_a", wantB ? "modem_a" : "modem_b"};\n',
         1,
     )
+    probe_fn = '''
+extern "C" void fuxi_modem_probe_files(void) {
+    if (!gVolume) return;
+    static const char *const cand[] = {
+        "image/modem_dtb.mdt", "image/modem.mdt", "image/modem_dtb.mbn", "image/modem.mbn",
+        "image/spss1t.b00", "image/spss1t.mdt", "image/ipa_fws.b00", "image/ipa_fws.mdt",
+        "image/modem_pr/mcfg/configs/mcfg_sw/generic/common/wildcard/wildcard/mcfg_sw.mbn",
+        "image/mba.mbn", "image/qdsp6m.qdb", "image/modemr.jsn"
+    };
+    for (unsigned i = 0; i < sizeof cand / sizeof cand[0]; ++i) {
+        FatFile f = {};
+        const int rc = fat_open(gVolume, cand[i], &f);
+        if (!rc) IOLog("fuxi modem file: %s size=%u\\n", cand[i], f.size);
+    }
+}
+'''
+    t = t.replace(end_anchor, end_anchor + probe_fn, 1)
     p.write_text(t)
-    print('patched FuxiAdspFirmware.cpp:', p)
+    print('patched FuxiAdspFirmware.cpp (fuxi-fw-slot + file probe):', p)
 
 def patch_adsp(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi adsp mbn:' in t:
+    if 'fuxi adsp auth:' in t:
         print('already patched:', p)
         return
     anchor = '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
@@ -210,22 +234,19 @@ def patch_adsp(p: pathlib.Path):
     repl = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    uint32_t m[12] = {};\n'
-        '    if (bytes >= image.mdt.header_size + sizeof m) memcpy(m, va + image.mdt.header_size, sizeof m);\n'
-        '    IOLog("fuxi adsp mbn: pas=0x%x init=0x%llx hdr=%llu hidx=%d min=0x%llx max=0x%llx reloc=%u w=%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\\n",\n'
-        '          pas, (unsigned long long)rInit.x0, image.mdt.header_size, image.mdt.hash, image.mdt.min_address, image.mdt.max_address, image.mdt.relocatable,\n'
-        '          m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);\n'
+        '    IOLog("fuxi adsp auth: pas=0x%x init=0x%llx\\n", pas, (unsigned long long)rInit.x0);\n'
         '    if (!scmOk(rInit)) return -1;\n'
     )
     t = t.replace(anchor, repl, 1)
     p.write_text(t)
-    print('patched AdspProbe.cpp (MBN v7 dump):', p)
+    print('patched AdspProbe.cpp:', p)
 
 def patch_modem(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi modem mbn:' in t:
+    if 'fuxi tzdiag:' in t:
         print('already patched:', p)
         return
+    decl_anchor = 'void sheng_fw_close(void *handle);\n'
     auth_anchor = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    if (!scmOk(scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0))) return -1;\n'
@@ -233,25 +254,37 @@ def patch_modem(p: pathlib.Path):
         '        return -2;\n'
         '    return 0;\n'
     )
+    assert t.count(decl_anchor) == 1, f'decl_anchor missing in {p}'
     assert t.count(auth_anchor) == 1, f'auth_anchor missing in {p}'
+    t = t.replace(decl_anchor, decl_anchor + 'void fuxi_modem_probe_files(void) __attribute__((weak));\n', 1)
     auth_new = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    uint32_t m[12] = {};\n'
-        '    if (bytes >= image.mdt.header_size + sizeof m) memcpy(m, va + image.mdt.header_size, sizeof m);\n'
-        '    IOLog("fuxi modem mbn: pas=0x%x init=0x%llx hdr=%llu hidx=%d min=0x%llx max=0x%llx reloc=%u w=%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\\n",\n'
-        '          pas, (unsigned long long)rInit.x0, image.mdt.header_size, image.mdt.hash, image.mdt.min_address, image.mdt.max_address, image.mdt.relocatable,\n'
-        '          m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);\n'
+        '    IOLog("fuxi modem v11: pas=0x%x phys=0x%llx bytes=%llu init=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
         '    if (!scmOk(rInit)) {\n'
         '        if (pas == kPasDtb) {\n'
-        '            Image *cdsp = static_cast<Image *>(IOMallocZeroData(sizeof(Image)));\n'
-        '            if (cdsp) {\n'
-        '                int crc = openImage(*cdsp, "modem:cdsp_dtb");\n'
-        '                int authRc = crc ? crc : authenticateHeader(*cdsp, 0x25, 0x9b800000ull);\n'
-        '                IOLog("fuxi modem ctrl cdsp_dtb(0x25): open=%d auth=%d\\n", crc, authRc);\n'
-        '                if (!crc && !authRc) scm(QCOM_SCM_PAS_SHUTDOWN, qcom_scm_args(1, 0, 0, 0), 0x25, 0, 0);\n'
-        '                release(*cdsp);\n'
-        '                IOFreeData(cdsp, sizeof(Image));\n'
+        '            if (fuxi_modem_probe_files) fuxi_modem_probe_files();\n'
+        '            // Scan SM8550 IMEM (0x14680000..0x146ac000) for tzbsp_diag magic (0x747a6467 / 0x67647a74) or 0x300045\n'
+        '            Window im = {};\n'
+        '            if (mapWindow(im, 0x14680000ull, 0x2c000ull)) {\n'
+        '                unsigned hits = 0;\n'
+        '                for (uint32_t off = 0; off < 0x2c000u; off += 4) {\n'
+        '                    const uint32_t v = rd(im, off);\n'
+        '                    if (v == 0x747a6467u || v == 0x67647a74u || v == 0x300045u || v == 0xffcfffbbu || v == 0x747a6267u) {\n'
+        '                        IOLog("fuxi tzdiag: imem+0x%x = 0x%08x next=%08x %08x %08x\\n",\n'
+        '                              off, v, off + 4 < 0x2c000u ? rd(im, off + 4) : 0u,\n'
+        '                              off + 8 < 0x2c000u ? rd(im, off + 8) : 0u, off + 12 < 0x2c000u ? rd(im, off + 12) : 0u);\n'
+        '                        if (++hits >= 8) break;\n'
+        '                    }\n'
+        '                }\n'
+        '                // Also check well-known QCOM IMEM diag pointer region 0x146aa700..0x146aa760\n'
+        '                IOLog("fuxi tzdiag: imem@2a700: %08x %08x %08x %08x %08x %08x %08x %08x\\n",\n'
+        '                      rd(im, 0x2a700), rd(im, 0x2a704), rd(im, 0x2a708), rd(im, 0x2a70c),\n'
+        '                      rd(im, 0x2a710), rd(im, 0x2a714), rd(im, 0x2a718), rd(im, 0x2a71c));\n'
+        '                IOLog("fuxi tzdiag: imem@2a720: %08x %08x %08x %08x %08x %08x %08x %08x\\n",\n'
+        '                      rd(im, 0x2a720), rd(im, 0x2a724), rd(im, 0x2a728), rd(im, 0x2a72c),\n'
+        '                      rd(im, 0x2a730), rd(im, 0x2a734), rd(im, 0x2a738), rd(im, 0x2a73c));\n'
+        '                unmap(im);\n'
         '            }\n'
         '            native_modem_stats[12] = (int32_t)rInit.x0; native_modem_stats[13] = (int32_t)rInit.x1;\n'
         '        }\n'
@@ -263,7 +296,7 @@ def patch_modem(p: pathlib.Path):
     )
     t = t.replace(auth_anchor, auth_new, 1)
     p.write_text(t)
-    print('patched ModemProbe.cpp (v10 MBN v7 dump + cdsp_dtb 0x25 control):', p)
+    print('patched ModemProbe.cpp (v11 IMEM tzdiag + modem_a file probe):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
