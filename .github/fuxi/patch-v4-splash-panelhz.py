@@ -243,7 +243,7 @@ def patch_adsp(p: pathlib.Path):
 
 def patch_modem(p: pathlib.Path):
     t = p.read_text()
-    if 'fuxi modem v12:' in t:
+    if 'fuxi modem v12b:' in t:
         print('already patched:', p)
         return
     decl_anchor = 'void sheng_fw_close(void *handle);\n'
@@ -260,17 +260,16 @@ def patch_modem(p: pathlib.Path):
     auth_new = (
         '    const uint64_t phys = image.meta->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);\n'
         '    const ScmResult rInit = scm(QCOM_SCM_PAS_INIT_IMAGE, qcom_scm_args(2, QCOM_SCM_VAL, QCOM_SCM_RW, 0), pas, phys, 0);\n'
-        '    IOLog("fuxi modem v12: pas=0x%x phys=0x%llx bytes=%llu init=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
+        '    IOLog("fuxi modem v12b: pas=0x%x phys=0x%llx bytes=%llu init=0x%llx/0x%llx\\n", pas, phys, bytes, (unsigned long long)rInit.x0, (unsigned long long)rInit.x1);\n'
         '    if (!scmOk(rInit)) {\n'
         '        if (pas == kPasDtb) {\n'
-        '            // Safe single-page read of SM8550 qcom,tz-log pointer at 0x146aa720 (NO full IMEM scan!)\n'
         '            Window im = {};\n'
         '            if (mapWindow(im, 0x146aa000ull, 0x1000ull)) {\n'
         '                const uint32_t diagPtr = rd(im, 0x720);\n'
         '                const uint32_t w1 = rd(im, 0x724), w2 = rd(im, 0x728), w3 = rd(im, 0x72c);\n'
         '                IOLog("fuxi tzlog: @146aa720=%08x %08x %08x %08x\\n", diagPtr, w1, w2, w3);\n'
         '                unmap(im);\n'
-        '                if (diagPtr >= 0x14680000u && diagPtr < 0x146ac000u || (diagPtr >= 0x80000000u && diagPtr < 0xf0000000u)) {\n'
+        '                if ((diagPtr >= 0x14680000u && diagPtr < 0x146ac000u) || (diagPtr >= 0x80000000u && diagPtr < 0xf0000000u)) {\n'
         '                    const uint64_t pg = diagPtr & ~0xfffull;\n'
         '                    const uint32_t pgOff = diagPtr & 0xfffu;\n'
         '                    Window dw = {};\n'
@@ -281,18 +280,20 @@ def patch_modem(p: pathlib.Path):
         '                        const uint32_t rlen  = rd(dw, pgOff + 0x20);\n'
         '                        IOLog("fuxi tzlog: hdr magic=%08x ver=%u ring_off=0x%x ring_len=0x%x\\n", magic, ver, roff, rlen);\n'
         '                        if (roff > 0 && roff < 0x3000u && rlen > 0 && roff + rlen <= 0x3f00u) {\n'
-        '                            const uint8_t *base8 = reinterpret_cast<const uint8_t *>(dw.base) + pgOff + roff;\n'
-        '                            const uint32_t dumpLen = rlen > 768u ? 768u : rlen;\n'
-        '                            const uint32_t start = rlen - dumpLen;\n'
+        '                            const uint32_t dumpLen = (rlen > 768u ? 768u : rlen) & ~3u;\n'
+        '                            const uint32_t start = (rlen - dumpLen) & ~3u;\n'
         '                            char line[97];\n'
         '                            uint32_t pos = 0;\n'
-        '                            for (uint32_t k = 0; k < dumpLen; k++) {\n'
-        '                                uint8_t c = base8[start + k];\n'
-        '                                if (c == 0x0a || c == 0x0d || pos == 96) {\n'
-        '                                    if (pos > 0) { line[pos] = 0; IOLog("fuxi tzlog: %s\\n", line); pos = 0; }\n'
-        '                                    continue;\n'
+        '                            for (uint32_t k = 0; k < dumpLen; k += 4) {\n'
+        '                                const uint32_t w = rd(dw, pgOff + roff + start + k);\n'
+        '                                for (unsigned b = 0; b < 4; b++) {\n'
+        '                                    uint8_t c = (uint8_t)((w >> (b * 8u)) & 0xffu);\n'
+        '                                    if (c == 0x0a || c == 0x0d || pos == 96) {\n'
+        '                                        if (pos > 0) { line[pos] = 0; IOLog("fuxi tzlog: %s\\n", line); pos = 0; }\n'
+        '                                        continue;\n'
+        '                                    }\n'
+        '                                    if (c >= 0x20 && c <= 0x7e) line[pos++] = (char)c;\n'
         '                                }\n'
-        '                                if (c >= 0x20 && c <= 0x7e) line[pos++] = (char)c;\n'
         '                            }\n'
         '                            if (pos > 0) { line[pos] = 0; IOLog("fuxi tzlog: %s\\n", line); }\n'
         '                        }\n'
@@ -310,7 +311,7 @@ def patch_modem(p: pathlib.Path):
     )
     t = t.replace(auth_anchor, auth_new, 1)
     p.write_text(t)
-    print('patched ModemProbe.cpp (v12 safe tz-log @0x146aa720):', p)
+    print('patched ModemProbe.cpp (v12b rd() tz-log):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
