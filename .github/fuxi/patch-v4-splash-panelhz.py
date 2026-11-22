@@ -245,17 +245,19 @@ def patch_modem(p: pathlib.Path):
     print('modem patch skipped in v14 (no unsafe IMEM read):', p)
 
 def patch_submit(p: pathlib.Path):
-    import re
+    print('v15: keeping upstream 50ms stage_due in', p)
+
+def patch_noibdump(p: pathlib.Path):
     t = p.read_text()
-    if 'v14c fast idle-CP unstick' in t:
+    if 'v15 no-ibdump' in t:
         print('already patched:', p)
         return
-    a_snap = '    const uint32_t want=pending>=1000000?2:pending>=50000?1:0;\n'
-    assert t.count(a_snap) == 1, f'a_snap missing in {p}'
-    t = t.replace(a_snap, '    // v14c fast idle-CP unstick: only dump heavy ibdump on real >=500ms hangs, not 50ms micro-stalls\n    const uint32_t want=pending>=1000000?2:pending>=500000?1:0;\n', 1)
-    t2, n = re.subn(r'stage_due\(stall_stage,\s*0,([^,]+),\s*50000\)', r'stage_due(stall_stage,0,\1,15000)', t)
-    print(f'patched {p}: snapshot_due=500ms, stage_due(0,50000->15000) hits={n}')
-    p.write_text(t2)
+    anchor = "         '                        for (unsigned which = 0; which < 3; ++which) {\\n'\n"
+    assert t.count(anchor) == 1, f'ibdump anchor missing in {p}'
+    repl = "         '                        if (0) /* v15 no-ibdump: kill 2377-line serial flood */ for (unsigned which = 0; which < 3; ++which) {\\n'\n"
+    t = t.replace(anchor, repl, 1)
+    p.write_text(t)
+    print('patched build-ios17-legacy-display.py (v15: disabled 2377-line gpu ibdump flood):', p)
 
 if __name__ == '__main__':
     mode = sys.argv[1]
@@ -268,4 +270,5 @@ if __name__ == '__main__':
         elif mode == 'adsp': patch_adsp(p)
         elif mode == 'modem': patch_modem(p)
         elif mode == 'submit': patch_submit(p)
+        elif mode == 'noibdump': patch_noibdump(p)
         else: raise SystemExit(f'unknown mode {mode}')
