@@ -174,7 +174,7 @@ def patch_gpupower(p: pathlib.Path):
     )
     t = t.replace(
         grant_anchor,
-        '    accelerator->setProperty("NativeSandboxGrantProcess", "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard,Preferences,MobileSafari,MobileSlideShow");\n',
+        '    accelerator->setProperty("NativeSandboxGrantProcess", bootArg("fuxi-metal-widgets", 0) ? "backboardd,iconservicesagent,WidgetRenderer_Default,PosterBoard" : "backboardd,iconservicesagent");\n',
         1,
     )
     t = t.replace(
