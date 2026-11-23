@@ -1,0 +1,15 @@
+diff --git a/osfmk/vm/vm_compressor.c b/osfmk/vm/vm_compressor.c
+--- a/osfmk/vm/vm_compressor.c
++++ b/osfmk/vm/vm_compressor.c
+@@ -857,7 +857,10 @@
+ 	if (max_mem <= (2ULL * 1024ULL * 1024ULL * 1024ULL)) {
+ 		compressor_pool_multiplier = 2;
+ 	} else {
+-		compressor_pool_multiplier = 1;
++		/* fuxi: iOS gives 2 GiB+ devices a single pool. Two pools keep more compressed
++		 * pages resident, which is what lets the wallpaper and widget processes stay
++		 * alive on a 6.5 GiB window instead of being jetsammed. */
++		compressor_pool_multiplier = 2;
+ 	}
+ #else
+ 	compressor_pool_multiplier = 1;

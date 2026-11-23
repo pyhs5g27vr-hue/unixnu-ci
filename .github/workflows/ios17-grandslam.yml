@@ -97,6 +97,10 @@ jobs:
           PY
           # Port upstream rk3588-wc-batch-flush.patch: flush+invalidate dirty zero lines on batch VM_WIMG_WCOMB transitions
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-wc-batch-flush.patch" UniXNU/patches/xnu-10063-arm64e/zzz-wc-batch-flush.patch
+          # fuxi: two compressor pools on iOS (2 GiB+ devices get one), so the wallpaper and
+          # widget processes stay resident on a 6.5 GiB window instead of being jetsammed.
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zzz-compressor-pool-2.patch" \
+             UniXNU/patches/xnu-10063-arm64e/zzz-compressor-pool-2.patch
           # Ensure zz-msg-probe.patch and zzz-webkit-msg-probe.patch declare proc_pid for RELEASE LTO reference
           for mp in UniXNU/patches/xnu-10063-arm64e/zz-msg-probe.patch UniXNU/patches/xnu-10063-arm64e/zzz-webkit-msg-probe.patch; do
             [ -f "$mp" ] && python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zz-msg-probe-fix.py" "$mp"
