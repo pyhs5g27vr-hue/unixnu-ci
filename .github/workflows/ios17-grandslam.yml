@@ -361,6 +361,19 @@ jobs:
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/wifi-fastjoin.py" "$GITHUB_WORKSPACE"
 
+      - name: cpu frequency policy (reference CpuFreqProbe - frame-driven floor, per-domain stats)
+        run: |
+          set -euo pipefail
+          U=c8f92b208068eeaa4cd2b0f592671f04ee70076e
+          curl -fsSL --retry 3 -o /tmp/CpuFreqProbe.cpp \
+            "https://raw.githubusercontent.com/UniXNU/UniXNU-sheng/$U/package/CpuFreqProbe.cpp"
+          head -3 /tmp/CpuFreqProbe.cpp
+          n=0
+          for f in $(find device device-ios17 UniXNU -name CpuFreqProbe.cpp 2>/dev/null); do
+            cp /tmp/CpuFreqProbe.cpp "$f"; n=$((n+1)); echo "replaced $f"
+          done
+          [ "$n" -gt 0 ] || { echo 'no CpuFreqProbe.cpp in the tree'; exit 1; }
+
       - name: uefi-fuxi (pinned fuxi.dtb)
         run: |
           git clone -q --filter=blob:none https://github.com/ljhhkx529/uefi-fuxi.git uefi-fuxi
