@@ -17,8 +17,10 @@ import sys
 CODE = r'''
 /* hw-vsync probe: the panel's own vsync through the MDSS interrupt (SM8550 mdss@0x0ae00000, GIC SPI 83 -> INTID 115,
  * level high; MDP@0x0ae01000, top0 group bits 27/29 = INTF_1/INTF_2 vsync). Counted only: no display state changes. */
-extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
-extern int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *);
+extern "C" vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+extern "C" int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint64_t *);
+extern "C" int printf(const char *, ...);
+extern "C" kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
 static volatile uint8_t *hvMdss;
 static volatile uint8_t *hvMdp;
 static volatile uint64_t hvInt27, hvInt29, hvIntOther;
