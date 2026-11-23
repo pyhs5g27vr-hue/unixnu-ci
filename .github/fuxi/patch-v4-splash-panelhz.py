@@ -242,7 +242,30 @@ def patch_adsp(p: pathlib.Path):
     print('patched AdspProbe.cpp:', p)
 
 def patch_modem(p: pathlib.Path):
-    print('modem patch skipped in v14 (no unsafe IMEM read):', p)
+    t = p.read_text()
+    if 'fuxi: the DTB image is optional here' in t:
+        print('already patched:', p)
+        return
+    old = (
+        "    if ((rc = authenticateHeader(gDtbImage, kPasDtb, kDtbBase)) || (rc = loadSegments(gDtbImage, kDtbBase, kDtbSize)) ||\n"
+        "        (rc = scmOk(scm(QCOM_SCM_PAS_AUTH_AND_RESET, qcom_scm_args(1, 0, 0, 0), kPasDtb, 0, 0)) ? 0 : -3)) {\n"
+        "        fail(StDtb, rc); vote(0, 0); release(gDtbImage); release(gMpssImage); return false;\n"
+        "    }\n"
+        "    stage(StDtb);\n"
+    )
+    new = (
+        "    // fuxi: the DTB image is optional here. Record its result and carry on to the main image, so a\n"
+        "    // single boot tells us whether PAS 4 alone can start the modem.\n"
+        "    rc = authenticateHeader(gDtbImage, kPasDtb, kDtbBase);\n"
+        "    if (!rc) rc = loadSegments(gDtbImage, kDtbBase, kDtbSize);\n"
+        "    if (!rc) rc = scmOk(scm(QCOM_SCM_PAS_AUTH_AND_RESET, qcom_scm_args(1, 0, 0, 0), kPasDtb, 0, 0)) ? 0 : -3;\n"
+        "    native_modem_stats[14] = rc;\n"
+        "    if (rc) {char dtbMsg[40]; snprintf(dtbMsg, sizeof dtbMsg, \"dtb rc %d\", rc); note(\"\", dtbMsg);}\n"
+        "    else stage(StDtb);\n"
+    )
+    assert t.count(old) == 1, 'modem DTB anchor missing in %s' % p
+    p.write_text(t.replace(old, new, 1))
+    print('patched modem DTB step (best effort + result in stats[14]):', p)
 
 def patch_submit(p: pathlib.Path):
     print('v15: keeping upstream 50ms stage_due in', p)
