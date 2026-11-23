@@ -1,0 +1,46 @@
+diff --git a/crates/metal2vulkan-runtime/src/copied.rs b/crates/metal2vulkan-runtime/src/copied.rs
+index 117a138..1468f0d 100644
+--- a/crates/metal2vulkan-runtime/src/copied.rs
++++ b/crates/metal2vulkan-runtime/src/copied.rs
+@@ -1914,22 +1914,29 @@ unsafe fn copy_in_untagged(pages: NonNull<u8>, copy: NonNull<u8>, bytes: Range<u
+ unsafe fn copy_in_run(ends: Ends, bytes: Range<usize>) -> u64 {
+     let (pages, copy) = (ends.pages.as_ptr(), ends.copy.as_ptr());
+     let mut written = 0u64;
+-    let (mut now, mut was) = ([0u8; SYNC_BLOCK], [0u8; SYNC_BLOCK]);
++    let mut now = [0u8; SYNC_BLOCK];
+     let mut at = bytes.start;
+     while at < bytes.end {
+         let span = (bytes.end - at).min(SYNC_BLOCK);
+-        // SAFETY: `span` bytes at `at` lie in both (the caller's); the blocks are this call's own.
+-        unsafe {
+-            // The pages may be a cache-inhibited mapping, which answers word loads alone (a run
+-            // starting at 8 of a 4096-byte block faults `memcpy`'s 16-byte pairs): copy_page_bytes.
+-            copy_page_bytes(pages.add(at), now.as_mut_ptr(), span);
+-            std::ptr::copy_nonoverlapping(copy.add(at), was.as_mut_ptr(), span);
+-        }
+-        let (fresh, held) = (&now[..span], &was[..span]);
+-        if fresh != held {
+-            written += fresh.iter().zip(held).filter(|(a, b)| a != b).count() as u64;
++        // SAFETY: `span` bytes at `at` lie in both (the caller's); the block is this call's own.
++        // The pages may be a cache-inhibited mapping, which answers word loads alone (a run starting
++        // at 8 of a 4096-byte block faults `memcpy`'s 16-byte pairs): copy_page_bytes.
++        unsafe { copy_page_bytes(pages.add(at), now.as_mut_ptr(), span) };
++        // The copy is compared where it lies: staging it into a second block first cost a whole
++        // block of traffic per 4096 bytes for nothing but an operand.
++        let differ = {
++            // SAFETY: as above, in the copy.
++            let held = unsafe { std::slice::from_raw_parts(copy.add(at) as *const u8, span) };
++            if &now[..span] == held {
++                0
++            } else {
++                now[..span].iter().zip(held).filter(|(a, b)| a != b).count()
++            }
++        };
++        if differ != 0 {
++            written += differ as u64;
+             // SAFETY: as above; nothing else writes the copy's bytes meanwhile (the caller's).
+-            unsafe { std::ptr::copy_nonoverlapping(fresh.as_ptr(), copy.add(at), span) };
++            unsafe { std::ptr::copy_nonoverlapping(now.as_ptr(), copy.add(at), span) };
+         }
+         at += span;
+     }

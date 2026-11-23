@@ -633,6 +633,17 @@ jobs:
               b.write_text(s.replace(old, "    '0065-fuxi-ios-read-pages.patch',\n    '0066-copied-device-safe-page-reads.patch']]", 1))
               print('bridge: 0066 added')
           P66
+          # 0067: copy_in_run 直接就地比较 copy，去掉每 4KB 一次的全量栈拷贝（每帧省 1/3 页流量）
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0067-copied-page-compare-in-place.patch" drivers/AdrenoMetal/bridge/patches/
+          python3 - <<'P67'
+          from pathlib import Path
+          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
+          if '0067-copied-page-compare-in-place.patch' not in s:
+              old = "    '0066-copied-device-safe-page-reads.patch']]"
+              assert s.count(old) == 1, 'bridge PATCHES table changed (0067)'
+              b.write_text(s.replace(old, "    '0066-copied-device-safe-page-reads.patch',\n    '0067-copied-page-compare-in-place.patch']]", 1))
+              print('bridge: 0067 added')
+          P67
           # Re-checkout metal2vulkan translator to the 46e7cc96 pin
           python3 - <<'PY2'
           import json, subprocess
