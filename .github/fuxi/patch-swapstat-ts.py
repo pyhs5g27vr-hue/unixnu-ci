@@ -34,7 +34,16 @@ def patch(p: pathlib.Path) -> bool:
 
 
 if __name__ == '__main__':
-    for a in sys.argv[1:]:
+    args = sys.argv[1:]
+    if not args:
+        sys.exit('usage: patch-swapstat-ts.py FILE...  (refusing to run with no target)')
+    seen = 0
+    for a in args:
         p = pathlib.Path(a)
-        if p.exists():
-            patch(p)
+        if not p.exists():
+            sys.exit('missing file: %s' % p)
+        patch(p)
+        seen += 1
+    if not seen:
+        sys.exit('nothing patched')
+    print('swapstat timestamp: %d file(s) considered' % seen)
