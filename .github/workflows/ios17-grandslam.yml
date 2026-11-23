@@ -244,6 +244,9 @@ jobs:
             $(find device device-ios17 UniXNU -name BootWatchdogPolicy.c -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" backlight \
             $(find device device-ios17 UniXNU -name AppleARMBacklight.cpp -type f 2>/dev/null)
+          # 1c-2) hw-vsync: 统计面板 INTF vsync 中断（hw-vsync=1，只观测不改时序）
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-hw-vsync.py" hwvsync \
+            $(find device device-ios17 UniXNU -name AppleARMBacklight.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" fwslot \
@@ -360,19 +363,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/wifi-fastjoin.py" "$GITHUB_WORKSPACE"
-
-      - name: cpu frequency policy (reference CpuFreqProbe - frame-driven floor, per-domain stats)
-        run: |
-          set -euo pipefail
-          U=c8f92b208068eeaa4cd2b0f592671f04ee70076e
-          curl -fsSL --retry 3 -o /tmp/CpuFreqProbe.cpp \
-            "https://raw.githubusercontent.com/UniXNU/UniXNU-sheng/$U/package/CpuFreqProbe.cpp"
-          head -3 /tmp/CpuFreqProbe.cpp
-          n=0
-          for f in $(find device device-ios17 UniXNU -name CpuFreqProbe.cpp 2>/dev/null); do
-            cp /tmp/CpuFreqProbe.cpp "$f"; n=$((n+1)); echo "replaced $f"
-          done
-          [ "$n" -gt 0 ] || { echo 'no CpuFreqProbe.cpp in the tree'; exit 1; }
 
       - name: uefi-fuxi (pinned fuxi.dtb)
         run: |
