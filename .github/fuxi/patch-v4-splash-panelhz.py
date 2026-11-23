@@ -93,7 +93,7 @@ void fuxiPanelHzThread(void *, wait_result_t) {
     IOLog("fuxi dpu hz: before en=%x cfg=%x tear=%x sync=%x auto=%x f=%u..%u df=%u te=%u..%u dte=%u dt=%uus\\n",
           en, cfg, tear, sync, autoCfg, f0, f1, f1 - f0, te0, te1, (te1 - te0) & 0xffffu, (unsigned)(ns0 / 1000));
 
-    unsigned targetHz = 0;
+    unsigned targetHz = 120;   /* fuxi: panel 120 Hz by default; fuxi-panel-hz overrides */
     PE_parse_boot_argn("fuxi-panel-hz", &targetHz, sizeof(targetHz));
     if ((targetHz == 60 || targetHz == 90 || targetHz == 120) && gDsi.va && !gDsiHalt) {
         const uint32_t v60 = targetHz == 120 ? 0x00u : 0x08u;
