@@ -72,6 +72,9 @@ jobs:
           B64=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
           git config --global "http.https://github.com/.extraHeader" "AUTHORIZATION: basic $B64"
           bash kerfand/tools/reconstruct.sh "$GITHUB_WORKSPACE"
+          # fuxi: restore 53f direct scanout (drop GopFramebuffer 0004..0007/0009-idle/0010, keep df4a905 + console stride + vsync-fixed=0, lock-free single-ring native_adreno_fences)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fix-direct-scanout.py" \
+            UniXNU/drivers/GopFramebuffer UniXNU/drivers/Adreno740
           git -C UniXNU log --oneline -5
           git -C UniXNU/drivers/Adreno740 log --oneline -3
           git -C UniXNU/drivers/AdrenoMetal log --oneline -3
