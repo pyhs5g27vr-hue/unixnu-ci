@@ -72,6 +72,13 @@ jobs:
           B64=$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')
           git config --global "http.https://github.com/.extraHeader" "AUTHORIZATION: basic $B64"
           bash kerfand/tools/reconstruct.sh "$GITHUB_WORKSPACE"
+          # metalup2: upgrade Adreno740 -> 2962e289 (+ fuxi port patch) and AdrenoMetal -> b25e48e5 (UniXNU b04f131 pins)
+          git -C UniXNU/drivers/Adreno740 fetch -q origin 2962e289c9690aeb668072c170679e6fb28bf8de
+          git -C UniXNU/drivers/Adreno740 checkout -q 2962e289c9690aeb668072c170679e6fb28bf8de
+          git -C UniXNU/drivers/Adreno740 apply --index "$GITHUB_WORKSPACE/ci-self/.github/fuxi/a740-fuxi-on-2962e289.patch"
+          git -C UniXNU/drivers/Adreno740 -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: port 0001+0002 onto 2962e289"
+          git -C UniXNU/drivers/AdrenoMetal fetch -q origin b25e48e51dfdf4b3889ede6e701ab7dd59929a03
+          git -C UniXNU/drivers/AdrenoMetal checkout -q b25e48e51dfdf4b3889ede6e701ab7dd59929a03
           git -C UniXNU log --oneline -5
           git -C UniXNU/drivers/Adreno740 log --oneline -3
           git -C UniXNU/drivers/AdrenoMetal log --oneline -3
@@ -529,6 +536,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd out-ios17/fuxi/tree
+          # metalup2: pull UniXNU b04f131 GPU build scripts + 26 Mesa patches + ios17e support before Mesa/Turnip/Plugin builds
+          U=b04f131da9151182dbb26ce4e638fa8acc2933ac; M="$RUNNER_TEMP/unixnu-main"
+          rm -rf "$M"; git init -q "$M"
+          git -C "$M" fetch -q --depth=1 https://github.com/UniXNU/UniXNU.git "$U"
+          git -C "$M" checkout -q FETCH_HEAD
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup2-port-fixed.py" scripts "$M" HEAD
           python3 - <<'PY'
           import json, subprocess, sys
           from pathlib import Path
@@ -568,29 +581,27 @@ jobs:
         working-directory: UniXNU
         run: |
           cd out-ios17/fuxi/tree
-          # f0ae963's drivers/AdrenoMetal is at c9ebd2fb (which needs translator 46e7cc96 + 0063/0064/0065),
-          # while its ios17/scripts/build-adreno-metal-bridge.py still had the old 555b13d5 table.
-          # Pull UniXNU 8542980's bridge script + translator pin (preserving f0ae963's plugin script with FuxiScanoutScaleAir.c!).
-          cp scripts/build-adreno-metal-plugin.py "$RUNNER_TEMP/fuxi-plugin.py"
-          U=8542980d02b4d2cc5c32ee3542de1760b2562aac; M="$RUNNER_TEMP/unixnu-main"; mkdir -p "$M/scripts/data"
-          for f in scripts/build-adreno-metal-bridge.py scripts/build-adreno-metal-plugin.py scripts/macho-self-bind-weak-imports.py scripts/data/gpu-metal-vulkan-inputs.json; do
-            curl -fsSL --retry 3 -o "$M/$f" "https://raw.githubusercontent.com/UniXNU/UniXNU/$U/$f"
-          done
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/metalup-port.py" scripts "$M"
-          cp "$RUNNER_TEMP/fuxi-plugin.py" scripts/build-adreno-metal-plugin.py
-          # Minimal GpuScanoutPresenter.h optimizations: kSources 4->6 (match kernel 6 mappings) + 32x8 dual-wave dispatch
+          # Minimal GpuScanoutPresenter.h optimization: kSources 4->6 (match kernel 6 mappings)
           python3 - <<'PGSP'
           from pathlib import Path
           gp = Path('drivers/AdrenoMetal/GpuScanoutPresenter.h')
           s = gp.read_text()
           s1 = 'static constexpr unsigned kSources = 4;'
-          s2 = '[encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + 15) / 16, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(16, 8, 1)];'
-          assert s.count(s1) == 1 and s.count(s2) == 1, (s.count(s1), s.count(s2))
+          assert s.count(s1) == 1, f'kSources anchor count={s.count(s1)}'
           s = s.replace(s1, 'static constexpr unsigned kSources = 6;', 1)
-          s = s.replace(s2, 'const NSUInteger tw = scale_.maxTotalThreadsPerThreadgroup >= 256 ? 32 : 16; [encoder dispatchThreadgroups:MTLSizeMake((scanout_.width + tw - 1) / tw, (scanout_.height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(tw, 8, 1)];', 1)
           gp.write_text(s)
-          print('GpuScanoutPresenter.h: kSources=6 + 32x8 dispatch patched')
+          print('GpuScanoutPresenter.h: kSources=6 patched')
           PGSP
+          # Guard iPadOS 27 (24A446) hardcoded QuartzCore shared-cache writes on ios17e (21H16)
+          python3 - <<'P24A'
+          from pathlib import Path
+          p = Path('drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm'); s = p.read_text()
+          old = '#if !TARGET_OS_OSX\n        // The stored option values and the framebuffer branch are addresses of iPadOS 27\'s QuartzCore (24A446).'
+          new = '#if !TARGET_OS_OSX && !defined(NATIVE_ADRENO_IOS17_ARM64E)\n        // The stored option values and the framebuffer branch are addresses of iPadOS 27\'s QuartzCore (24A446).'
+          assert s.count(old) == 1, f'24A446 QuartzCore guard count={s.count(old)}'
+          p.write_text(s.replace(old, new, 1))
+          print('NativeAdrenoMetalPlugin.mm: guarded 24A446 QuartzCore writes for ios17e')
+          P24A
           # row=1: 只开 telemetry 表（内核 board rows，串口可读），不开 diag=1 的帧 trace / Turnip stamp /
           # encoder timing —— 那些内存会把 backboardd 顶到 Jetsam 打死（实测 signal 9 / ns 25，present 0）。
           python3 - <<'PROW'
@@ -609,53 +620,7 @@ jobs:
           p.write_text(s)
           print('row=1 (SHENG_STATUS) patched into the plugin')
           PROW
-          # Add 0065-fuxi-ios-read-pages.patch (if not already present) for ios17e translator 46e7cc96
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0065-fuxi-ios-read-pages.patch" drivers/AdrenoMetal/bridge/patches/
-          python3 - <<'P65'
-          from pathlib import Path
-          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
-          if '0065-fuxi-ios-read-pages.patch' not in s:
-              old = "    '0064-copies-leave-unreachable-pages-alone.patch']]"
-              assert s.count(old) == 1, 'bridge PATCHES table changed'
-              b.write_text(s.replace(old, "    '0064-copies-leave-unreachable-pages-alone.patch',\n    '0065-fuxi-ios-read-pages.patch']]", 1))
-              print('bridge: 0065 added')
-          P65
-          # 0066: 被导入的宿主页在 fuxi 上是 cache-inhibited 映射，memcpy 的 16 字节 ldnp 会触发
-          # SIGBUS(ESR DFSC 0x21) 打死 backboardd；拷页改用 8 字节对齐 volatile 读。
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0066-copied-device-safe-page-reads.patch" drivers/AdrenoMetal/bridge/patches/
-          python3 - <<'P66'
-          from pathlib import Path
-          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
-          if '0066-copied-device-safe-page-reads.patch' not in s:
-              old = "    '0065-fuxi-ios-read-pages.patch']]"
-              assert s.count(old) == 1, 'bridge PATCHES table changed (0066)'
-              b.write_text(s.replace(old, "    '0065-fuxi-ios-read-pages.patch',\n    '0066-copied-device-safe-page-reads.patch']]", 1))
-              print('bridge: 0066 added')
-          P66
-          # 0067: copy_in_run 直接就地比较 copy，去掉每 4KB 一次的全量栈拷贝（每帧省 1/3 页流量）
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/0067-copied-page-compare-in-place.patch" drivers/AdrenoMetal/bridge/patches/
-          python3 - <<'P67'
-          from pathlib import Path
-          b = Path('scripts/build-adreno-metal-bridge.py'); s = b.read_text()
-          if '0067-copied-page-compare-in-place.patch' not in s:
-              old = "    '0066-copied-device-safe-page-reads.patch']]"
-              assert s.count(old) == 1, 'bridge PATCHES table changed (0067)'
-              b.write_text(s.replace(old, "    '0066-copied-device-safe-page-reads.patch',\n    '0067-copied-page-compare-in-place.patch']]", 1))
-              print('bridge: 0067 added')
-          P67
-          # Re-checkout metal2vulkan translator to the 46e7cc96 pin
-          python3 - <<'PY2'
-          import json, subprocess
-          from pathlib import Path
-          tr = json.loads(Path('scripts/data/gpu-metal-vulkan-inputs.json').read_text())['translator']
-          src = Path('.cache/gpu-reference/metal2vulkan')
-          subprocess.run(['git', '-C', str(src), 'reset', '--hard', '-q'], check=True)
-          subprocess.run(['git', '-C', str(src), 'clean', '-fdx', '-q'], check=True)
-          subprocess.run(['git', '-C', str(src), 'fetch', '-q', '--depth=1', tr.get('mirror', tr['repository']), tr['commit']], check=True)
-          subprocess.run(['git', '-C', str(src), 'checkout', '-q', '--detach', 'FETCH_HEAD'], check=True)
-          print('translator ->', subprocess.check_output(['git', '-C', str(src), 'rev-parse', 'HEAD'], text=True).strip())
-          PY2
-          # Guard iOS 17 SDK shim enums that already exist in Xcode 26's iPhoneOS26.5.sdk MTLLibrary.h
+          # Guard iOS 17 SDK shim enums if present in Xcode 26's iPhoneOS26.5.sdk MTLLibrary.h
           python3 - <<'PYENUM'
           from pathlib import Path
           p = Path('drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm')
@@ -670,17 +635,6 @@ jobs:
                   n += 1
           p.write_text(s)
           print('guarded SDK26 enum shims:', n)
-          # GpuScanoutPresenter.h weak-imports fuxi_scanout_scale_air, which ld64 refuses unless defined.
-          # shaders/scanout_convert.ll already carries scanout_scale inside libadreno_metal_bridge.a (nmb_scanout_convert_air),
-          # so call nmb_scanout_convert_air directly.
-          gp = Path('drivers/AdrenoMetal/GpuScanoutPresenter.h')
-          gs = gp.read_text()
-          gs = gs.replace('extern "C" const void *fuxi_scanout_scale_air(size_t *length) __attribute__((weak_import));\n', '')
-          gs = gs.replace('const bool own = [name isEqualToString:@"scanout_scale"] && fuxi_scanout_scale_air;', 'const bool own = false;')
-          gs = gs.replace('const void *air = own ? fuxi_scanout_scale_air(&length) : nmb_scanout_convert_air(&length);', 'const void *air = nmb_scanout_convert_air(&length);')
-          assert 'fuxi_scanout_scale_air' not in gs, 'fuxi_scanout_scale_air still referenced in GpuScanoutPresenter.h'
-          gp.write_text(gs)
-          print('GpuScanoutPresenter.h: using nmb_scanout_convert_air directly (includes scanout_scale)')
           PYENUM
           python3 scripts/build-adreno-metal-plugin.py --target ios17e --no-replay
           cd build
