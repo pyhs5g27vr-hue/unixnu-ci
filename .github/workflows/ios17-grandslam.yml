@@ -633,8 +633,13 @@ jobs:
               if line in s:
                   s = s.replace(line, '// ' + line + ' /* in iPhoneOS26 SDK */')
                   n += 1
+          # iPhoneOS26.5 SDK: MTLBarrierScopeRenderTargets is API_UNAVAILABLE(ios); same value (1 << 2) by number
+          old = 'MTLBarrierScopeBuffers|MTLBarrierScopeTextures|MTLBarrierScopeRenderTargets'
+          assert s.count(old) == 1, ('barrier scope anchor', s.count(old))
+          s = s.replace(old, 'MTLBarrierScopeBuffers|MTLBarrierScopeTextures|(MTLBarrierScope)(1 << 2)')
+          assert 'MTLBarrierScopeRenderTargets' not in s, 'MTLBarrierScopeRenderTargets still used'
           p.write_text(s)
-          print('guarded SDK26 enum shims:', n)
+          print('guarded SDK26 enum shims:', n, '+ barrier scope render targets by value')
           PYENUM
           python3 scripts/build-adreno-metal-plugin.py --target ios17e --no-replay
           cd build
