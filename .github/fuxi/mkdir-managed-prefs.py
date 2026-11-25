@@ -16,10 +16,12 @@ static int fuxi_ensure_managed_prefs_dir(proc_t p, uint64_t scratch) {
  static const char *const dirs[] = {
   "/private/var/Managed Preferences",
   "/private/var/Managed Preferences/mobile",
+  "/private/var/log",
+  "/private/var/log/com.apple.xpc.launchd",
  };
  int32_t res = 0;
- int rcs[2] = {-1, -1};
- for (unsigned i = 0; i < 2; ++i) {
+ int rcs[4] = {-1, -1, -1, -1};
+ for (unsigned i = 0; i < 4; ++i) {
   int err = copyout(dirs[i], scratch, strlen(dirs[i]) + 1);
   if (!err) {
    struct mkdir_args md = {.path = scratch, .mode = 0755};
@@ -36,7 +38,7 @@ static int fuxi_ensure_managed_prefs_dir(proc_t p, uint64_t scratch) {
   }
   rcs[i] = err;
  }
- printf("fuxi mprefs: mkdir rc %d %d\n", rcs[0], rcs[1]);
+ printf("fuxi mprefs: mkdir rc %d %d log %d %d\n", rcs[0], rcs[1], rcs[2], rcs[3]);
  return rcs[0] ? rcs[0] : rcs[1];
 }
 
