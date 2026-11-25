@@ -568,7 +568,6 @@ jobs:
         working-directory: UniXNU
         run: |
           cd out-ios17/fuxi/tree
-          mkdir -p build && cp "$GITHUB_WORKSPACE/ci-self/ci/patches/prime-list.txt" build/prime-list.txt && wc -l build/prime-list.txt
           # f0ae963's drivers/AdrenoMetal is at c9ebd2fb (which needs translator 46e7cc96 + 0063/0064/0065),
           # while its ios17/scripts/build-adreno-metal-bridge.py still had the old 555b13d5 table.
           # Pull UniXNU 8542980's bridge script + translator pin (preserving f0ae963's plugin script with FuxiScanoutScaleAir.c!).
@@ -711,7 +710,7 @@ jobs:
           PY
           cd out-ios17/fuxi/tree
           mkdir -p build/ios17-addon
-          ADRENO_PLUGIN_DIR=$PWD/build/adreno-metal-plugin17e python3 scripts/make-gpu-addon.py --publish --prime-list build/prime-list.txt build/ios17-addon/base.gpuaddon
+          ADRENO_PLUGIN_DIR=$PWD/build/adreno-metal-plugin17e python3 scripts/make-gpu-addon.py --publish build/ios17-addon/base.gpuaddon
           python3 scripts/build-fuxi-statusbar.py build/ios17-addon/base.gpuaddon build/ios17-addon/kernel.macho.gpuaddon
           cat build/adreno-metal-plugin17e/trust.json
           mkdir -p "$RUNNER_TEMP/addon-out"
