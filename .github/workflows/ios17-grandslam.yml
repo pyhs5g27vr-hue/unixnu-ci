@@ -81,6 +81,10 @@ jobs:
           git -C UniXNU/drivers/AdrenoMetal checkout -q b25e48e51dfdf4b3889ede6e701ab7dd59929a03
           # Kerfand 82e scanout_scale (GPU scaling of the logical 1179x2556 frame to the 1080x2400 panel); without it every GPU frame is refused
           git -C UniXNU/drivers/AdrenoMetal apply --index "$GITHUB_WORKSPACE/ci-self/.github/fuxi/adrenometal-82e-scanout-scale.diff"
+          # no FUXI_SCANOUT_AIR build step here: scale() takes scanout_scale from nmb_scanout_convert_air (the patched .ll) instead
+          sed -i '' 's|^extern "C" const void \*fuxi_scanout_scale_air(size_t \*length) __attribute__((weak_import));$|static const void *(*const fuxi_scanout_scale_air)(size_t *) = nullptr;|' UniXNU/drivers/AdrenoMetal/GpuScanoutPresenter.h
+          grep -n "fuxi_scanout_scale_air)(size_t" UniXNU/drivers/AdrenoMetal/GpuScanoutPresenter.h
+          git -C UniXNU/drivers/AdrenoMetal add GpuScanoutPresenter.h
           git -C UniXNU/drivers/AdrenoMetal -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: Kerfand 82e scanout_scale"
           git -C UniXNU log --oneline -5
           git -C UniXNU/drivers/Adreno740 log --oneline -3
