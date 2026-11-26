@@ -198,6 +198,12 @@ jobs:
           fi
           grep -c dwc3_failure_state device/drivers/QcomXnuUsbDebug/usb/Dwc3.c
 
+          # 2b) Kerfand ceb99ca (layout-2026-11-26) Bluetooth, verbatim: FuxiBluetooth.cpp VSC fix + launch constraint for BlueTool/fuxi-logdump
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/FuxiBluetooth.cpp" device/package/FuxiBluetooth.cpp
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/zz-btd-launch-constraint.patch" UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
+          grep -c gVscFixed device/package/FuxiBluetooth.cpp
+          grep -c fuxi-logdump UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
+
           # 3) Init single-commit git repos for device and drivers so build scripts can call git rev-parse HEAD
           for r in device/drivers/*/ device/kits/*/ device; do
             [ -d "$r" ] || continue
