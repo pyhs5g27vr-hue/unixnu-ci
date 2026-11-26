@@ -51,7 +51,7 @@ PUBLISH_PATCH = [
         '        if((note.kind!=NativeAdrenoNotePass && note.kind!=NativeAdrenoNotePipeline) || note.count>NativeAdrenoNoteWords)return kIOReturnBadArgument;\n',
         '        if(note.kind==3 && note.count>0 && note.count<=NativeAdrenoNoteWords) {\n'
         '            static volatile uint32_t fuxi_note_logged=0;\n'
-        '            if(__atomic_fetch_add(&fuxi_note_logged,1,__ATOMIC_RELAXED)<64) {\n'
+        '            if(__atomic_fetch_add(&fuxi_note_logged,1,__ATOMIC_RELAXED)<256) {\n'
         '                char text[NativeAdrenoNoteWords*4+1];\n'
         '                const size_t nbytes=size_t(note.count)*4;\n'
         '                memcpy(text,note.words,nbytes);\n'
