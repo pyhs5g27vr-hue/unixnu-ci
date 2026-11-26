@@ -2,40 +2,51 @@
 zzy-staged-system-apps.patch after port-nodim-apps.py apps. Once the staged copy is complete, the Data com.apple.migration /
 com.apple.DataMigration prefs are moved aside (.t970) once, so the next launchd runs the restore-style migration and
 SystemAppMigrator really installs the 33 apps (their widget appex get registered). /private/var/db/.t970-migrate-once marks it done.
-fuxi change: gated by fuxi-migrate-once=1 (=2 ignores the done marker, =3 also moves purplebuddy aside, =4 moves it back) so daily images never trigger it. LastSystemVersion is not touched."""
+fuxi change: gated by fuxi-migrate-once=1..7 so daily images never trigger it. LastSystemVersion is not touched.
+  =1: move migration plists once (respects .t970-migrate-once)
+  =2: move migration plists ignoring .t970-migrate-once
+  =3: move migration + purplebuddy plists aside
+  =4: restore purplebuddy plists back from .t970
+  =5: move migration + purplebuddy + installd SystemAppState/UninstalledApplications plists aside (logs exists/rc)
+  =6: restore purplebuddy plists only (keep newly generated SystemAppState after successful migration)
+  =7: full rollback: restore purplebuddy + SystemAppState + UninstalledApplications plists back from .t970"""
 import sys
 from pathlib import Path
 
-FN = r'''/* gts7xlwifi t970-migrate-once (fuxi: only with fuxi-migrate-once=1): install the staged system apps. The copy alone registers
+FN = r'''/* gts7xlwifi t970-migrate-once (fuxi: only with fuxi-migrate-once=1..7): install the staged system apps. The copy alone registers
  * no widget extension; only SystemAppMigrator installs them, and it runs only in the first-boot data migration, which the seed
  * skips. Once the copy is complete this moves the migration preferences aside once, so the next launchd runs the migration as
- * after a restore. Counters: [0] stage (1 moved, 2 done before, -1 no complete copy, -2 marker failed), [1] moved, [2] error. */
+ * after a restore. Counters: [0] stage (1 moved, 2 done before, 4/6/7 restored, -1 no complete copy, -2 marker failed), [1] moved, [2] error. */
 volatile int native_t970_migrate[3] = {0, 0, 0};
 static const char native_t970_migrate_marker[] = "/private/var/db/.t970-migrate-once";
 static void
 native_t970_migrate_once(proc_t p, user_addr_t scratch)
 {
-	static const char *const prefs[4] = {
+	static const char *const prefs[6] = {
 		"/private/var/mobile/Library/Preferences/com.apple.migration.plist",
 		"/private/var/mobile/Library/Preferences/com.apple.DataMigration.plist",
 		"/private/var/mobile/Library/Preferences/com.apple.purplebuddy.plist",
 		"/private/var/mobile/Library/Preferences/com.apple.purplebuddy.notbackedup.plist",
+		"/private/var/installd/Library/MobileInstallation/SystemAppState.plist",
+		"/private/var/installd/Library/MobileInstallation/UninstalledApplications.plist",
 	};
 	uint32_t enabled = 0;
-	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || enabled < 1 || enabled > 4) {
+	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || enabled < 1 || enabled > 7) {
 		return;
 	}
 	vfs_context_t ctx = vfs_context_current();
 	vnode_t vp = NULLVP;
-	/* fuxi-migrate-once=3 also moves the purplebuddy prefs aside (Setup.app runs, and only Setup.app wakes datamigrator);
-	 * =4 only moves them back, so SetupDone returns without a Data reset (sheng-setup=1 deletes them for good). */
-	const int first = enabled == 4 ? 2 : 0, last = enabled == 3 ? 4 : enabled == 4 ? 4 : 2;
-	const bool back = enabled == 4;
+	/* =3 moves migration+purplebuddy aside; =4 restores purplebuddy; =5 also moves installd SystemAppState/UninstalledApplications
+	 * aside (with exists/rc diagnostics); =6 restores purplebuddy only (keeps new state); =7 rolls back purplebuddy+installd plists. */
+	const bool back = (enabled == 4 || enabled == 6 || enabled == 7);
+	const int first = back ? 2 : 0;
+	const int last = (enabled == 5 || enabled == 7) ? 6 : (enabled == 3 || enabled == 4 || enabled == 6) ? 4 : 2;
+	int diag_ex[2] = {-1, -1}, diag_rc[2] = {-1, -1};
 	if (back) {
-		native_t970_migrate[0] = 4;
+		native_t970_migrate[0] = (int)enabled;
 		goto move;
 	}
-	/* fuxi-migrate-once=2: move the prefs aside again even after the marker (a migration under the union rewrote them). */
+	/* fuxi-migrate-once=2/3/5: move the prefs aside again even after the marker (a migration under the union rewrote them). */
 	if (enabled == 1 && !vnode_lookup(native_t970_migrate_marker, VNODE_LOOKUP_NOFOLLOW, &vp, ctx)) {
 		vnode_put(vp);
 		native_t970_migrate[0] = 2;
@@ -53,12 +64,26 @@ move:;
 		struct rename_args request = {.from = scratch + 0xa00, .to = scratch + 0xc00};
 		int32_t result = 0;
 		snprintf(to, sizeof(to), "%s.t970", prefs[i]);
-		int error = copyout(back ? to : prefs[i], request.from, strlen(back ? to : prefs[i]) + 1);
+		const char *src = back ? to : prefs[i];
+		const char *dst = back ? prefs[i] : to;
+		if (i >= 4) {
+			vnode_t probe = NULLVP;
+			if (!vnode_lookup(src, VNODE_LOOKUP_NOFOLLOW, &probe, ctx)) {
+				vnode_put(probe);
+				diag_ex[i - 4] = 1;
+			} else {
+				diag_ex[i - 4] = 0;
+			}
+		}
+		int error = copyout(src, request.from, strlen(src) + 1);
 		if (!error) {
-			error = copyout(back ? prefs[i] : to, request.to, strlen(back ? prefs[i] : to) + 1);
+			error = copyout(dst, request.to, strlen(dst) + 1);
 		}
 		if (!error) {
 			error = rename(p, &request, &result);
+		}
+		if (i >= 4) {
+			diag_rc[i - 4] = error;
 		}
 		if (!error) {
 			native_t970_migrate[1]++;
@@ -78,10 +103,17 @@ move:;
 		native_t970_migrate[2] = error;
 		native_t970_migrate[0] = -2;
 	} else {
-		native_t970_migrate[0] = 1;
+		native_t970_migrate[0] = (enabled == 5) ? 5 : 1;
 	}
 out:
-	printf("fuxi migrate-once: stage %d moved %d err %d\n", native_t970_migrate[0], native_t970_migrate[1], native_t970_migrate[2]);
+	if (enabled == 5 || enabled == 7) {
+		printf("fuxi migrate-once: stage %d moved %d err %d sas=ex%d/rc%d uninst=ex%d/rc%d\n",
+		    native_t970_migrate[0], native_t970_migrate[1], native_t970_migrate[2],
+		    diag_ex[0], diag_rc[0], diag_ex[1], diag_rc[1]);
+	} else {
+		printf("fuxi migrate-once: stage %d moved %d err %d\n",
+		    native_t970_migrate[0], native_t970_migrate[1], native_t970_migrate[2]);
+	}
 }
 
 '''
