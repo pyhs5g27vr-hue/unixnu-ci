@@ -258,7 +258,7 @@ index 5184390..e97159a 100644
 +		return;
 +	}
 +	struct vnode *vp = vnode_pager_lookup_vnode(object->pager);   /* NULL for a pager that is not a vnode pager */
-+	if (vp == NULLVP) {
++	if (vp == NULL) {
 +		return;
 +	}
 +	ppnum_t pn = VM_PAGE_GET_PHYS_PAGE(page);
