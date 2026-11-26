@@ -2,7 +2,7 @@
 zzy-staged-system-apps.patch after port-nodim-apps.py apps. Once the staged copy is complete, the Data com.apple.migration /
 com.apple.DataMigration prefs are moved aside (.t970) once, so the next launchd runs the restore-style migration and
 SystemAppMigrator really installs the 33 apps (their widget appex get registered). /private/var/db/.t970-migrate-once marks it done.
-fuxi change: gated by fuxi-migrate-once=1 (=2 ignores the done marker) so daily images never trigger it. LastSystemVersion is not touched."""
+fuxi change: gated by fuxi-migrate-once=1 (=2 ignores the done marker, =3 also moves purplebuddy aside, =4 moves it back) so daily images never trigger it. LastSystemVersion is not touched."""
 import sys
 from pathlib import Path
 
@@ -15,16 +15,26 @@ static const char native_t970_migrate_marker[] = "/private/var/db/.t970-migrate-
 static void
 native_t970_migrate_once(proc_t p, user_addr_t scratch)
 {
-	static const char *const prefs[2] = {
+	static const char *const prefs[4] = {
 		"/private/var/mobile/Library/Preferences/com.apple.migration.plist",
 		"/private/var/mobile/Library/Preferences/com.apple.DataMigration.plist",
+		"/private/var/mobile/Library/Preferences/com.apple.purplebuddy.plist",
+		"/private/var/mobile/Library/Preferences/com.apple.purplebuddy.notbackedup.plist",
 	};
 	uint32_t enabled = 0;
-	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || (enabled != 1 && enabled != 2)) {
+	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || enabled < 1 || enabled > 4) {
 		return;
 	}
 	vfs_context_t ctx = vfs_context_current();
 	vnode_t vp = NULLVP;
+	/* fuxi-migrate-once=3 also moves the purplebuddy prefs aside (Setup.app runs, and only Setup.app wakes datamigrator);
+	 * =4 only moves them back, so SetupDone returns without a Data reset (sheng-setup=1 deletes them for good). */
+	const int first = enabled == 4 ? 2 : 0, last = enabled == 3 ? 4 : enabled == 4 ? 4 : 2;
+	const bool back = enabled == 4;
+	if (back) {
+		native_t970_migrate[0] = 4;
+		goto move;
+	}
 	/* fuxi-migrate-once=2: move the prefs aside again even after the marker (a migration under the union rewrote them). */
 	if (enabled == 1 && !vnode_lookup(native_t970_migrate_marker, VNODE_LOOKUP_NOFOLLOW, &vp, ctx)) {
 		vnode_put(vp);
@@ -36,15 +46,16 @@ native_t970_migrate_once(proc_t p, user_addr_t scratch)
 		goto out;
 	}
 	vnode_put(vp);
+move:;
 	char to[128];
-	for (int i = 0; i < 2; i++) {
+	for (int i = first; i < last; i++) {
 		/* The scratch is one 4 KiB page; the mount arguments end below 0xa00 and the staged-apps copy is finished. */
 		struct rename_args request = {.from = scratch + 0xa00, .to = scratch + 0xc00};
 		int32_t result = 0;
 		snprintf(to, sizeof(to), "%s.t970", prefs[i]);
-		int error = copyout(prefs[i], request.from, strlen(prefs[i]) + 1);
+		int error = copyout(back ? to : prefs[i], request.from, strlen(back ? to : prefs[i]) + 1);
 		if (!error) {
-			error = copyout(to, request.to, strlen(to) + 1);
+			error = copyout(back ? prefs[i] : to, request.to, strlen(back ? prefs[i] : to) + 1);
 		}
 		if (!error) {
 			error = rename(p, &request, &result);
@@ -54,6 +65,9 @@ native_t970_migrate_once(proc_t p, user_addr_t scratch)
 		} else if (error != ENOENT) {
 			native_t970_migrate[2] = error;
 		}
+	}
+	if (back) {
+		goto out;
 	}
 	vnode_t marker = NULLVP;
 	int error = vnode_open(native_t970_migrate_marker, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, 0644, 0, &marker, ctx);
