@@ -669,7 +669,7 @@ jobs:
           # route A (Gemini 11-26 15:41): a pipeline refused for 550/551 (b3a8) color attachments is retried as 115 (RGBA16Float)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-xr550-fallback.py" drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm
           # Gemini 11-26 20:34: row=1 sends key [metal table] rows to COM3; refuseSurface() notes its first 3 refusals
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-metal-table-note.py" drivers/AdrenoMetal/NativeAdrenoMetalPlugin.mm drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-metal-table-note.py" drivers/AdrenoMetal/NativeMetalBridgePhase.h drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm
           python3 scripts/build-adreno-metal-plugin.py --target ios17e --no-replay
           cd build
           if [ -d adreno-metal-plugin-ios17e ] && [ ! -e adreno-metal-plugin17e/NativeAdrenoMetal.bundle ]; then
