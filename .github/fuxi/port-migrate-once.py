@@ -2,7 +2,7 @@
 zzy-staged-system-apps.patch after port-nodim-apps.py apps. Once the staged copy is complete, the Data com.apple.migration /
 com.apple.DataMigration prefs are moved aside (.t970) once, so the next launchd runs the restore-style migration and
 SystemAppMigrator really installs the 33 apps (their widget appex get registered). /private/var/db/.t970-migrate-once marks it done.
-fuxi change: gated by fuxi-migrate-once=1 so daily images never trigger it. LastSystemVersion is not touched."""
+fuxi change: gated by fuxi-migrate-once=1 (=2 ignores the done marker) so daily images never trigger it. LastSystemVersion is not touched."""
 import sys
 from pathlib import Path
 
@@ -20,12 +20,13 @@ native_t970_migrate_once(proc_t p, user_addr_t scratch)
 		"/private/var/mobile/Library/Preferences/com.apple.DataMigration.plist",
 	};
 	uint32_t enabled = 0;
-	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || enabled != 1) {
+	if (!PE_parse_boot_argn("fuxi-migrate-once", &enabled, sizeof(enabled)) || (enabled != 1 && enabled != 2)) {
 		return;
 	}
 	vfs_context_t ctx = vfs_context_current();
 	vnode_t vp = NULLVP;
-	if (!vnode_lookup(native_t970_migrate_marker, VNODE_LOOKUP_NOFOLLOW, &vp, ctx)) {
+	/* fuxi-migrate-once=2: move the prefs aside again even after the marker (a migration under the union rewrote them). */
+	if (enabled == 1 && !vnode_lookup(native_t970_migrate_marker, VNODE_LOOKUP_NOFOLLOW, &vp, ctx)) {
 		vnode_put(vp);
 		native_t970_migrate[0] = 2;
 		goto out;
