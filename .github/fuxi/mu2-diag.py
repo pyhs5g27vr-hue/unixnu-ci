@@ -85,7 +85,7 @@ FRONTEND_PATCH = [
         '  {\n'
         '   static std::set<std::string> fuxiSent;\n'
         '   const char *raw=what.UTF8String?:"?";\n'
-        '   std::string msg(raw,strnlen(raw,160));\n'
+        '   std::string msg(raw,strnlen(raw,400));\n'
         '   if(fuxiSent.size()<32 && fuxiSent.insert(msg).second) {\n'
         '    static bool (*noteFn)(uint32_t,const uint32_t *,uint32_t)=nullptr;\n'
         '    static bool looked=false;\n'
@@ -110,6 +110,14 @@ FRONTEND_PATCH = [
         '   }\n'
         '  }\n',
         'NativeBridgeMetalFrontend noteProblem -> tu_darwin_note',
+    ),
+    (
+        '  NSString *why=[NSString stringWithFormat:@"%@ | frag %@ linked %lu stitched %u/%u compiler %s",lastError(),d.fragmentFunction.name,\n',
+        '  NSString *why=[NSString stringWithFormat:@"fmt0 %lu blend0 %u fmt1 %lu depth %lu stencil %lu samples %lu | %@ | frag %@ linked %lu stitched %u/%u compiler %s",\n'
+        '      (unsigned long)d.colorAttachments[0].pixelFormat,(unsigned)d.colorAttachments[0].blendingEnabled,(unsigned long)d.colorAttachments[1].pixelFormat,\n'
+        '      (unsigned long)d.depthAttachmentPixelFormat,(unsigned long)d.stencilAttachmentPixelFormat,(unsigned long)d.rasterSampleCount,\n'
+        '      lastError(),d.fragmentFunction.name,\n',
+        'NativeBridgeMetalFrontend refusal names the attachment formats',
     ),
 ]
 
