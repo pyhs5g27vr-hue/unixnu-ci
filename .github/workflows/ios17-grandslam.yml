@@ -79,6 +79,9 @@ jobs:
           git -C UniXNU/drivers/Adreno740 -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: port 0001+0002 onto 2962e289"
           git -C UniXNU/drivers/AdrenoMetal fetch -q origin b25e48e51dfdf4b3889ede6e701ab7dd59929a03
           git -C UniXNU/drivers/AdrenoMetal checkout -q b25e48e51dfdf4b3889ede6e701ab7dd59929a03
+          # Kerfand 82e scanout_scale (GPU scaling of the logical 1179x2556 frame to the 1080x2400 panel); without it every GPU frame is refused
+          git -C UniXNU/drivers/AdrenoMetal apply --index "$GITHUB_WORKSPACE/ci-self/.github/fuxi/adrenometal-82e-scanout-scale.diff"
+          git -C UniXNU/drivers/AdrenoMetal -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: Kerfand 82e scanout_scale"
           git -C UniXNU log --oneline -5
           git -C UniXNU/drivers/Adreno740 log --oneline -3
           git -C UniXNU/drivers/AdrenoMetal log --oneline -3
