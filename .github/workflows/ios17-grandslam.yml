@@ -262,6 +262,11 @@ jobs:
             $(find device device-ios17 UniXNU -name AppleARMBacklight.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
+          # mu2: GPU-owned BOs IO-coherent by default (metal2vulkan floor needs HOST_CACHED|COHERENT), d.report and Metal refusals to COM3
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" gpupower \
+            $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" publish \
+            $(find UniXNU -path '*drivers/Adreno740/NativeAdrenoPublish.cpp' -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" fwslot \
             $(find device device-ios17 UniXNU -name FuxiAdspFirmware.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" modem \
@@ -641,6 +646,7 @@ jobs:
           p.write_text(s)
           print('guarded SDK26 enum shims:', n, '+ barrier scope render targets by value')
           PYENUM
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" frontend drivers/AdrenoMetal/NativeBridgeMetalFrontend.mm
           python3 scripts/build-adreno-metal-plugin.py --target ios17e --no-replay
           cd build
           if [ -d adreno-metal-plugin-ios17e ] && [ ! -e adreno-metal-plugin17e/NativeAdrenoMetal.bundle ]; then
