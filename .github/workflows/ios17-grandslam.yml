@@ -263,6 +263,10 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
           # mu2: GPU-owned BOs IO-coherent by default (metal2vulkan floor needs HOST_CACHED|COHERENT), d.report and Metal refusals to COM3
+          # widgets: fuxi-mig-sentinel=1 creates /private/var/datamigrator/migrate (DataMigrator runs without a build change)
+          for f in $(find device device-ios17 UniXNU -name BootWatchdogPolicy.c -type f 2>/dev/null); do
+            python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-mig-sentinel.py" "$f"
+          done
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" publish \
