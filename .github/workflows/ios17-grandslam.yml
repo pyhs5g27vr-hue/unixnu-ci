@@ -197,8 +197,6 @@ jobs:
             git -C device/drivers/QcomXnuUsbDebug apply --verbose "$GITHUB_WORKSPACE/ci-self/.github/fuxi/qud-author-reboot-fix.patch"
           fi
           grep -c dwc3_failure_state device/drivers/QcomXnuUsbDebug/usb/Dwc3.c
-          # ljh V2 / Gemini 11-26: fuxi-panic-fastboot=<s> reboots to fastboot after the panic log drains (off by default)
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-panic-fastboot-port.py" device/drivers/QcomXnuUsbDebug/kernel/QcomXnuUsbDebug.c
 
           # 3) Init single-commit git repos for device and drivers so build scripts can call git rev-parse HEAD
           for r in device/drivers/*/ device/kits/*/ device; do
