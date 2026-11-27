@@ -22,11 +22,49 @@ volatile uint32_t fuxi_hwdt_state[4];   // [0] stage/error, [1] pings, [2] SDAM 
 static unsigned fuxi_hwdt_bark;
 #include <kern/debug.h>
 extern int armcpu_spi_attach(uint32_t, _Bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
-// Bark (claude 11-27): the early-boot hang leaves no trace before the bite; panic here prints every core's PC/LR/FP.
+// Bark (claude + Gemini 11-27): XNU prints only the panic title here, so print the state first.
+extern volatile uint32_t armcpu_core_timer[8] __attribute__((weak_import));
+extern volatile uint32_t armcpu_core_sgi[8] __attribute__((weak_import));
+extern volatile uint64_t boot_progress_last_pc __attribute__((weak_import));
+extern int cpu_number(void) __attribute__((weak_import));
+extern int proc_selfpid(void);
+extern void proc_selfname(char *, int);
 static void fuxi_hwdt_bark_irq(void *arg) {
   (void)arg;
-  printf("\nfuxi hwdt: BARK, pings %u, panicking for the per-core PCs\n", fuxi_hwdt_state[1]);
-  panic("fuxi hwdt bark (pings %u)", fuxi_hwdt_state[1]);
+  uint64_t mpidr = 0;
+  __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+  int cpu = (&cpu_number) ? cpu_number() : (int)((mpidr >> 8) & 0xffu);
+  char pname[24] = {};
+  proc_selfname(pname, sizeof(pname));
+  int pid = proc_selfpid();
+  uint64_t last_pc = (&boot_progress_last_pc) ? boot_progress_last_pc : 0;
+  printf("\n!!! FUXI HWDT BARK cpu=%d mpidr=%#llx pid=%d(%s) pings=%u bp_pc=%#llx !!!\n",
+         cpu, (unsigned long long)mpidr, pid, pname, (unsigned)fuxi_hwdt_state[1], (unsigned long long)last_pc);
+  if (&armcpu_core_timer && &armcpu_core_sgi) {
+    printf("  timers: %u %u %u %u %u %u %u %u | sgi: %u %u %u %u %u %u %u %u\n",
+           (unsigned)armcpu_core_timer[0], (unsigned)armcpu_core_timer[1],
+           (unsigned)armcpu_core_timer[2], (unsigned)armcpu_core_timer[3],
+           (unsigned)armcpu_core_timer[4], (unsigned)armcpu_core_timer[5],
+           (unsigned)armcpu_core_timer[6], (unsigned)armcpu_core_timer[7],
+           (unsigned)armcpu_core_sgi[0], (unsigned)armcpu_core_sgi[1],
+           (unsigned)armcpu_core_sgi[2], (unsigned)armcpu_core_sgi[3],
+           (unsigned)armcpu_core_sgi[4], (unsigned)armcpu_core_sgi[5],
+           (unsigned)armcpu_core_sgi[6], (unsigned)armcpu_core_sgi[7]);
+  }
+  // Walk up to 16 kernel stack frames from the bark ISR through the interrupted exception frame.
+  uint64_t fp = (uint64_t)(uintptr_t)__builtin_frame_address(0);
+  printf("  bt:");
+  for (unsigned i = 0; i < 16 && fp >= 0xffff000000000000ull && !(fp & 15u); ++i) {
+    const uint64_t *frame = (const uint64_t *)(uintptr_t)fp;
+    uint64_t next = frame[0];
+    uint64_t lr = frame[1];
+    printf(" %#llx", (unsigned long long)lr);
+    if (next <= fp || next - fp > 0x10000ull) break;
+    fp = next;
+  }
+  printf("\n");
+  panic("fuxi hwdt bark: cpu=%d pid=%d(%s) pings=%u bp_pc=%#llx",
+        cpu, pid, pname, (unsigned)fuxi_hwdt_state[1], (unsigned long long)last_pc);
 }
 
 // One SMCCC 1.1 call (x4..x17 preserved by the callee). Returns a0 as a signed 32-bit result.
