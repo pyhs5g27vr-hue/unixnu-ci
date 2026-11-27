@@ -1,0 +1,96 @@
+diff --git a/NativeBridgeMetalFrontend.mm b/NativeBridgeMetalFrontend.mm
+index f98bb57..986a2c3 100644
+--- a/NativeBridgeMetalFrontend.mm
++++ b/NativeBridgeMetalFrontend.mm
+@@ -4664,11 +4664,14 @@ static void fillBaseLimits(id device);
+ - (NSUInteger)minimumTextureBufferAlignmentForPixelFormat:(NSUInteger)format {
+  return ((NSUInteger (*)(id,SEL,NSUInteger))objc_msgSend)(self,sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),format);
+ }
+-// SPI: the row alignment a read-only texture over an IOSurface needs. Answered unasked it was 0 (a divisor for its callers); the linear
+-// texture alignment of the widest common format is the same rule this GPU applies to any linear image.
+-- (NSUInteger)iosurfaceReadOnlyTextureAlignmentBytes {
+- return ((NSUInteger (*)(id,SEL,NSUInteger))objc_msgSend)(self,sel_registerName("minimumLinearTextureAlignmentForPixelFormat:"),MTLPixelFormatRGBA16Float);
+-}
++// SPI: the row alignment a texture over an IOSurface needs (unanswered it was 0, a divisor for its callers). Core Image
++// (CIMetalTextureCreateFromPaddedIOSurface) and Metal's stride check refuse a surface whose rows are not a multiple of it, and
++// IOSurfaceCreate and CGBitmapContext align 8-bit four-channel rows to 16 or 32 bytes (SF Symbol rasterization in IconFoundation:
++// 72x52 at 288 bytes, 36x26 and 38x38 at 160): answering the linear alignment (64) dropped those glyphs. A texture over a buffer
++// whose rows the device's linear image does not take is the runtime's copy (check_over), so 16 is safe; the runtime answer is the
++// same (capabilities::IOSURFACE_ROW_ALIGNMENT). Linear textures over buffers keep the device's linear alignment.
++- (NSUInteger)iosurfaceTextureAlignmentBytes {return 16;}
++- (NSUInteger)iosurfaceReadOnlyTextureAlignmentBytes {return 16;}
+ - (uint64_t)registryID {return gRegistryID;}
+ - (NSUInteger)maxBufferLength {return nmb_device_max_buffer_length(gDevice);}
+ - (BOOL)hasUnifiedMemory {return YES;}
+diff --git a/bridge/NativeMetalCapabilities.rs b/bridge/NativeMetalCapabilities.rs
+index 73574c3..e4f9ed7 100644
+--- a/bridge/NativeMetalCapabilities.rs
++++ b/bridge/NativeMetalCapabilities.rs
+@@ -60,7 +60,25 @@ pub const PRIVATE_FLAGS: &[&str] = &[
+     "supportsTileShaders",
+ ];
+ 
++/// The row alignment a texture over an IOSurface plane needs. Core Image (`CIMetalTextureCreateFromPaddedIOSurface`) and
++/// Metal's stride check refuse a surface whose rows are not a multiple of it, and `IOSurfaceCreate` and `CGBitmapContext`
++/// align 8-bit four-channel rows to 16 or 32 bytes (SF Symbol rasterization: 72x52 at 288 bytes, 36x26 and 38x38 at 160).
++/// The runtime's texture over a buffer takes any row pitch that is a whole number of texels: in place where the device's
++/// linear image takes it, else its copy (`check_over`). Linear textures over buffers keep the device's linear alignment.
++pub const IOSURFACE_ROW_ALIGNMENT: u64 = 16;
++
++/// The answers that need no device.
++pub fn fixed_answer(selector: &str) -> Option<u64> {
++    match selector {
++        "iosurfaceTextureAlignmentBytes" | "iosurfaceReadOnlyTextureAlignmentBytes" => Some(IOSURFACE_ROW_ALIGNMENT),
++        _ => None,
++    }
++}
++
+ pub fn answer(device: &Device, selector: &str, arg: u64) -> Result<u64, String> {
++    if let Some(value) = fixed_answer(selector) {
++        return Ok(value);
++    }
+     let translator = device.translator();
+     let p = translator.metal_properties();
+     let profile = translator.profile();
+@@ -87,9 +105,7 @@ pub fn answer(device: &Device, selector: &str, arg: u64) -> Result<u64, String>
+             .map_err(|e| format!("linear alignment: {e:?}"))?,
+         "deviceLinearReadOnlyTextureAlignmentBytes"
+         | "deviceLinearTextureAlignmentBytes"
+-        | "linearTextureAlignmentBytes"
+-        | "iosurfaceTextureAlignmentBytes"
+-        | "iosurfaceReadOnlyTextureAlignmentBytes" => [
++        | "linearTextureAlignmentBytes" => [
+             PixelFormat::BGRA8Unorm,
+             PixelFormat::RGBA8Unorm,
+             PixelFormat::RGBA16Float,
+@@ -195,6 +211,21 @@ pub fn answer(device: &Device, selector: &str, arg: u64) -> Result<u64, String>
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn iosurface_row_alignment_is_16_and_linear_alignment_stays_the_runtimes() {
++        assert_eq!(fixed_answer("iosurfaceTextureAlignmentBytes"), Some(16));
++        assert_eq!(fixed_answer("iosurfaceReadOnlyTextureAlignmentBytes"), Some(16));
++        assert_eq!(IOSURFACE_ROW_ALIGNMENT, 16);
++        for linear in [
++            "linearTextureAlignmentBytes",
++            "deviceLinearTextureAlignmentBytes",
++            "deviceLinearReadOnlyTextureAlignmentBytes",
++            "minimumLinearTextureAlignmentForPixelFormat:",
++        ] {
++            assert_eq!(fixed_answer(linear), None, "{linear}");
++        }
++    }
++
+     #[test]
+     fn every_registered_selector_has_a_match_arm_in_answer() {
+         let source = include_str!("NativeMetalCapabilities.rs");
+@@ -214,7 +245,7 @@ mod tests {
+             .chain(crate::objects::PUBLIC_ANSWERS.iter().map(|(s, _)| *s))
+         {
+             let needle = format!("\"{selector}\"");
+-            if !answer_body.contains(&needle) {
++            if fixed_answer(selector).is_none() && !answer_body.contains(&needle) {
+                 missing.push(selector);
+             }
+         }

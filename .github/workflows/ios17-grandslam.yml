@@ -89,6 +89,9 @@ jobs:
           # upstream 6245fea pacing (WindowServer-like thread policy + setBytes batching), Gemini cut onto b25e48e (claude 11-27)
           git -C UniXNU/drivers/AdrenoMetal apply --index "$GITHUB_WORKSPACE/ci-self/.github/fuxi/adrenometal-pacing-6245fea.patch"
           git -C UniXNU/drivers/AdrenoMetal -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: upstream 6245fea pacing"
+          # upstream AdrenoMetal #74 85832c3a: IOSurface row alignment answers 16 (SF Symbol glyphs), Gemini cut onto b25e48e (claude 11-28)
+          git -C UniXNU/drivers/AdrenoMetal apply --index "$GITHUB_WORKSPACE/ci-self/.github/fuxi/adrenometal-pr74-iosurface-align16.patch"
+          git -C UniXNU/drivers/AdrenoMetal -c user.name=ci -c user.email=ci@localhost commit -q -m "fuxi: upstream #74 iosurface align 16"
           git -C UniXNU log --oneline -5
           git -C UniXNU/drivers/Adreno740 log --oneline -3
           git -C UniXNU/drivers/AdrenoMetal log --oneline -3
