@@ -130,6 +130,31 @@ for p in builds:
     p.write_text(s)
     print(f'baseband: {p}: modem sources in the adsp objects')
 
+# 5. (ours, claude 2026-11-27) FuxiModemProbe.cpp waitEvents() never blocked: assert_wait_timeout() returns THREAD_WAITING (-1),
+#    so `if (!assert_wait_timeout(...))` was always false, no thread_block() followed, and serviceLink()'s for(;;) spun one core
+#    (bb15: kernel_task 104-109% from the first sample; btturbo without the modem: 4-6%). Same code in ceb99ca, e2fd999, ljh V2 0645bfd.
+#    The wait now blocks until wake() (thread_wakeup on &gOwner.pending) or the timeout; the return contract is unchanged.
+WAIT_OLD = '''    if (!assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale)) {'''
+WAIT_NEW = '''    // claude 2026-11-27: assert_wait_timeout() returns THREAD_WAITING on success and does not block by itself; without the
+    // thread_block() below this function never slept and serviceLink() spun a core (kernel_task ~105%).
+    if (assert_wait_timeout(reinterpret_cast<event_t>(&gOwner.pending), THREAD_UNINT, ms, kMillisecondScale) == THREAD_WAITING) {
+        bits = __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
+        if (bits) {
+            clear_wait(current_thread(), THREAD_AWAKENED);
+            return bits;
+        }
+        (void)thread_block(THREAD_CONTINUE_NULL);
+        return __atomic_exchange_n(&gOwner.pending, 0, __ATOMIC_ACQ_REL);
+    }
+    if (false) {'''
+for d in pkgs:
+    p = d / 'FuxiModemProbe.cpp'
+    s = p.read_text()
+    if 'claude 2026-11-27: assert_wait_timeout' in s: continue
+    s = sub(s, WAIT_OLD, WAIT_NEW, p)
+    p.write_text(s)
+    print(f'baseband: {p}: waitEvents blocks (thread_block)')
+
 probes = sorted({p for r in roots for p in r.rglob('Ios17LegacyDisplayProbe.cpp')})
 assert probes, 'no Ios17LegacyDisplayProbe.cpp'
 for p in probes:
