@@ -19,7 +19,7 @@ enum {FuxiGhControl = 0x86000005, FuxiGhStatus = 0x86000006, FuxiGhPing = 0x8600
       FuxiGhEnable = 3, FuxiGhDisable = 2};
 static unsigned fuxi_hwdt_test;
 volatile uint32_t fuxi_hwdt_state[4];   // [0] stage/error, [1] pings, [2] SDAM before, [3] SDAM after
-static unsigned fuxi_hwdt_bark;
+static unsigned fuxi_hwdt_bark = 1;   // claude 11-27: on by default (args are full); fuxi-hwdt-bark=0 turns it off
 #include <kern/debug.h>
 extern int armcpu_spi_attach(uint32_t, _Bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 // Bark (claude + Gemini 11-27): XNU prints only the panic title here, so print the state first.
