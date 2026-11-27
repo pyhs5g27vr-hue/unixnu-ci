@@ -25,7 +25,6 @@ extern int armcpu_spi_attach(uint32_t, _Bool, void (*)(void *), void *, uint32_t
 // Bark (claude + Gemini 11-27): XNU prints only the panic title here, so print the state first.
 extern volatile uint32_t armcpu_core_timer[8] __attribute__((weak_import));
 extern volatile uint32_t armcpu_core_sgi[8] __attribute__((weak_import));
-extern volatile uint64_t boot_progress_last_pc __attribute__((weak_import));
 extern int cpu_number(void) __attribute__((weak_import));
 extern int proc_selfpid(void);
 extern void proc_selfname(char *, int);
@@ -37,7 +36,7 @@ static void fuxi_hwdt_bark_irq(void *arg) {
   char pname[24] = {};
   proc_selfname(pname, sizeof(pname));
   int pid = proc_selfpid();
-  uint64_t last_pc = (&boot_progress_last_pc) ? boot_progress_last_pc : 0;
+  uint64_t last_pc = 0;   // boot_progress_last_pc does not exist in this kernel (CI 45951203109 link error)
   printf("\n!!! FUXI HWDT BARK cpu=%d mpidr=%#llx pid=%d(%s) pings=%u bp_pc=%#llx !!!\n",
          cpu, (unsigned long long)mpidr, pid, pname, (unsigned)fuxi_hwdt_state[1], (unsigned long long)last_pc);
   if (&armcpu_core_timer && &armcpu_core_sgi) {
