@@ -19,6 +19,15 @@ enum {FuxiGhControl = 0x86000005, FuxiGhStatus = 0x86000006, FuxiGhPing = 0x8600
       FuxiGhEnable = 3, FuxiGhDisable = 2};
 static unsigned fuxi_hwdt_test;
 volatile uint32_t fuxi_hwdt_state[4];   // [0] stage/error, [1] pings, [2] SDAM before, [3] SDAM after
+static unsigned fuxi_hwdt_bark;
+#include <kern/debug.h>
+extern int armcpu_spi_attach(uint32_t, _Bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
+// Bark (claude 11-27): the early-boot hang leaves no trace before the bite; panic here prints every core's PC/LR/FP.
+static void fuxi_hwdt_bark_irq(void *arg) {
+  (void)arg;
+  printf("\nfuxi hwdt: BARK, pings %u, panicking for the per-core PCs\n", fuxi_hwdt_state[1]);
+  panic("fuxi hwdt bark (pings %u)", fuxi_hwdt_state[1]);
+}
 
 // One SMCCC 1.1 call (x4..x17 preserved by the callee). Returns a0 as a signed 32-bit result.
 static int32_t fuxi_gh_call(uint32_t fn, uint64_t a1, uint64_t a2) {
@@ -54,6 +63,7 @@ static void fuxi_hwdt_start(void) {
   if (!PE_parse_boot_argn("fuxi-hwdt", &secs, sizeof(secs)) || secs < 5) return;
   if (secs > 32) secs = 32;   // Gunyah reserves values above 0x8000 ms
   (void)PE_parse_boot_argn("fuxi-hwdt-test", &fuxi_hwdt_test, sizeof(fuxi_hwdt_test));
+  (void)PE_parse_boot_argn("fuxi-hwdt-bark", &fuxi_hwdt_bark, sizeof(fuxi_hwdt_bark));
   int32_t st = fuxi_gh_call(FuxiGhStatus, 0, 0);
   if (st != 0) {
     fuxi_hwdt_state[0] = 0xe0;
@@ -83,7 +93,14 @@ static void fuxi_hwdt_start(void) {
   if (rc) {fuxi_hwdt_state[0] = 0xe3; return;}
   const uint64_t ms = (uint64_t)secs * 1000;
   int32_t r1 = fuxi_gh_call(FuxiGhControl, FuxiGhDisable, 0);
-  int32_t r2 = fuxi_gh_call(FuxiGhSetTime, ms, ms);
+  uint64_t bark_ms = ms;
+  int bark_rc = -100;
+  if (fuxi_hwdt_bark == 1 && secs >= 10 && armcpu_spi_attach) {
+    bark_rc = armcpu_spi_attach(32, 0, fuxi_hwdt_bark_irq, NULL, NULL, NULL);
+    if (bark_rc == 0) bark_ms = ms - 5000;
+  }
+  printf("fuxi hwdt: bark %llu ms bite %llu ms (attach rc %d)\n", (unsigned long long)bark_ms, (unsigned long long)ms, bark_rc);
+  int32_t r2 = fuxi_gh_call(FuxiGhSetTime, bark_ms, ms);
   if (r2 != 0) {
     fuxi_hwdt_state[0] = 0xe4;
     printf("fuxi hwdt: SET_TIME %d (disable %d), not armed\n", r2, r1);
