@@ -170,7 +170,8 @@ for p in probes:
 #    bb15w: DMS Get Operating Mode answered result 1 / error 0x4a at bring-up (asked 1.7 s before the USIM was ready), the
 #    serving system stays "searching, radio interface NO_SVC" and the signal answers error 0x4a. Nothing else sets the mode:
 #    upstream leaves ONLINE to CommCenter, which never starts here (HasBaseband 0). Late (~SIM READY + 5 s), not early boot.
-#    sheng-bb-online=0 turns it off.
+#    sheng-bb-online=0 turns it off. Also NAS Set System Selection Preference (0x33): mode GSM/UMTS/LTE/NR, roaming any, CS+PS,
+#    until power cycle (ljhhkx529 unixnu-fuxi ed473e4: the modem registered right after CommCenter sent 0x33).
 ONLINE_FN = r'''// claude 2026-11-27: SIM READY + 5 s -> DMS Set Operating Mode ONLINE (0x2e, TLV 0x01 = 0), 3 s later read the mode and the
 // system selection back; the register poll is restarted so the serving system is logged for another minute.
 static uint8_t bb_online_state;
@@ -192,6 +193,23 @@ static void bb_online_step(void)
   uint8_t sdu[16];
   uint32_t n;
   if (bb_online_state == 1u) {
+    /* NAS Set System Selection Preference (0x33, libqmi qmi-service-nas.json), the request ljhhkx529's run saw CommCenter
+       send right before the modem registered (unixnu-fuxi ed473e4). bb15w's 0x34 read roaming 0 and no mode TLV; the
+       user's card is a China Mobile SIM roaming in Japan. Mode GSM|UMTS|LTE|NR (0x5c), roaming any (0xff), CS+PS (2),
+       change duration 0 = until power cycle: nothing is written to the modem's NV. */
+    const struct cbq_server *nas = cbq_server_find(&bb_qmux, CBN_SVC_NAS);
+    if (nas && bb_reg_slot >= 0) {
+      uint8_t sel[48];
+      uint32_t off = 0;
+      const uint8_t mode[2] = {0x5c, 0x00}, roam[2] = {0xff, 0x00}, dom[4] = {0x02, 0, 0, 0}, dur = 0;
+      off += cbd_tlv(sel + 7 + off, sizeof sel - 7u - off, 0x11, mode, 2);
+      off += cbd_tlv(sel + 7 + off, sizeof sel - 7u - off, 0x14, roam, 2);
+      off += cbd_tlv(sel + 7 + off, sizeof sel - 7u - off, 0x17, &dur, 1);
+      off += cbd_tlv(sel + 7 + off, sizeof sel - 7u - off, 0x18, dom, 4);
+      const uint32_t m = cbd_request(sel, ++bb_reg_txn, 0x0033u, off);
+      bb_queue_tx(CBQ_PORT_BASE + (uint32_t)bb_reg_slot, nas->node, nas->port, sel, m);
+      printf("COACHZ online: NAS set system selection (mode 0x5c, roaming any, CS+PS, until power cycle), txn 0x%x\n", bb_reg_txn);
+    }
     const uint8_t online = 0;
     n = cbd_request(sdu, ++bb_online_txn, BB_DMS_SET_MODE, cbd_tlv(sdu + 7, sizeof sdu - 7u, 0x01, &online, 1));
     printf("COACHZ online: DMS set operating mode ONLINE, txn 0x%x, t %u\n", bb_online_txn, now);
