@@ -321,6 +321,9 @@ jobs:
           # 2b) #12 widgets: gts7xlwifi t970-migrate-once (fuxi-migrate-once=1 only) -> SystemAppMigrator installs the apps
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-migrate-once.py" \
             device/patches/xnu/zzy-staged-system-apps.patch
+          # 2c) Wi-Fi Settings row: opi5plus MobileGestalt cache wipe, only with fuxi-mg-wipe=1 (claude 11-28)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-mg-wipe.py" \
+            device/patches/xnu/zzy-staged-system-apps.patch
 
           # 3) Hardware watchdog (FuxiHwdt.inc.c -> fuxi-hwdt=20)
           n=0
