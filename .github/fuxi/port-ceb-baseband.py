@@ -165,3 +165,62 @@ for p in probes:
     s = sub(s, '\tfuxi_modem_probe();\n', '\tnative_fuxi_modem_probe();\n', p)
     p.write_text(s)
     print(f'baseband: {p}: native_fuxi_modem_probe')
+
+# 6. (ours, claude 2026-11-27) after the SIM is READY, put the modem ONLINE over DMS and read the mode back.
+#    bb15w: DMS Get Operating Mode answered result 1 / error 0x4a at bring-up (asked 1.7 s before the USIM was ready), the
+#    serving system stays "searching, radio interface NO_SVC" and the signal answers error 0x4a. Nothing else sets the mode:
+#    upstream leaves ONLINE to CommCenter, which never starts here (HasBaseband 0). Late (~SIM READY + 5 s), not early boot.
+#    sheng-bb-online=0 turns it off.
+ONLINE_FN = r'''// claude 2026-11-27: SIM READY + 5 s -> DMS Set Operating Mode ONLINE (0x2e, TLV 0x01 = 0), 3 s later read the mode and the
+// system selection back; the register poll is restarted so the serving system is logged for another minute.
+static uint8_t bb_online_state;
+static uint32_t bb_online_at, bb_online_txn = 0x4e00u;
+static void bb_online_step(void)
+{
+  if (bb_online_state >= 3u || !bb_uim_ready) return;
+  const uint32_t now = bb_now_ms();
+  if (bb_online_state == 0u) {
+    uint32_t on = 1;
+    if (PE_parse_boot_argn("sheng-bb-online", &on, sizeof on) && on == 0) { bb_online_state = 3u; printf("COACHZ online: off (sheng-bb-online=0)\n"); return; }
+    bb_online_at = now + 5000u; bb_online_state = 1u; return;
+  }
+  if (now < bb_online_at) return;
+  const struct cbq_server *server = cbq_server_find(&bb_qmux, BB_DMS);
+  if (!server) return;
+  if (bb_dms_slot < 0) bb_dms_slot = cbq_client_alloc(&bb_qmux, CBQ_INTERNAL, BB_DMS);
+  if (bb_dms_slot < 0) return;
+  uint8_t sdu[16];
+  uint32_t n;
+  if (bb_online_state == 1u) {
+    const uint8_t online = 0;
+    n = cbd_request(sdu, ++bb_online_txn, BB_DMS_SET_MODE, cbd_tlv(sdu + 7, sizeof sdu - 7u, 0x01, &online, 1));
+    printf("COACHZ online: DMS set operating mode ONLINE, txn 0x%x, t %u\n", bb_online_txn, now);
+    bb_online_at = now + 3000u; bb_online_state = 2u;
+  } else {
+    n = cbd_request(sdu, ++bb_online_txn, BB_DMS_GET_MODE, 0);
+    printf("COACHZ online: DMS get operating mode again, txn 0x%x, t %u\n", bb_online_txn, now);
+    const struct cbq_server *nas = cbq_server_find(&bb_qmux, CBN_SVC_NAS);
+    if (nas && bb_reg_slot >= 0) {
+      uint8_t sel[32];
+      const uint32_t m = cbn_build_request(sel, sizeof sel, ++bb_reg_txn, CBN_NAS_GET_SYSTEM_SELECTION);
+      if (m) bb_queue_tx(CBQ_PORT_BASE + (uint32_t)bb_reg_slot, nas->node, nas->port, sel, m);
+    }
+    bb_reg_tries = 0;   /* another minute of serving-system polls */
+    bb_online_state = 3u;
+  }
+  bb_queue_tx(CBQ_PORT_BASE + (uint32_t)bb_dms_slot, server->node, server->port, sdu, n);
+}
+
+'''
+RADIO_ANCHOR = '// The three requests, in the order they are worth asking in.\nstatic void bb_radio_step(void)\n'
+LOOP_OLD = '  if (bb_lpm_pending == 1) { bb_lpm_pending = 2; bb_lpm_send(); }\n'
+LOOP_NEW = LOOP_OLD + '  bb_online_step();   // claude 2026-11-27\n'
+for d in pkgs:
+    p = d / 'coachz_baseband.cpp'
+    if not p.exists(): continue
+    s = p.read_text()
+    if 'bb_online_step' in s: continue
+    s = sub(s, RADIO_ANCHOR, ONLINE_FN + RADIO_ANCHOR, p)
+    s = sub(s, LOOP_OLD, LOOP_NEW, p)
+    p.write_text(s)
+    print(f'baseband: {p}: DMS online after SIM ready')
