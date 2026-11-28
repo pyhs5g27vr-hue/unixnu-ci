@@ -157,3 +157,6 @@ static void fuxi_hwdt_start(void) {
   printf("fuxi hwdt: Gunyah watchdog %s (enable %d), bite after %u s without pings (test %u)\n", r3 == 0 ? "armed" : "NOT armed", r3,
          secs, fuxi_hwdt_test);
 }
+// claude 11-28: called from Ios17LegacyDisplayProbe.cpp before the modem probe (fuxi-hwdt-early.py); fuxi_hwdt_start is once-only.
+void fuxi_hwdt_start_early(void);
+void fuxi_hwdt_start_early(void) { fuxi_hwdt_start(); }
