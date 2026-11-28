@@ -219,6 +219,9 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-modem-quiet.py" device device-ios17 UniXNU
           # Gemini 11-28 (bb9): default CPU turbo=1 (A715 2803 / X3 3187 MHz, 0 boot-args bytes)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-cpufreq-turbo-default.py" device device-ios17 UniXNU
+          # Gemini 11-28 (bb10): FTM5 touch keepalive (20 s idle -> fts_start_sensing) + battery 10 s refresh
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-touch-keepalive.py" device device-ios17 UniXNU
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-battery-10s.py" device device-ios17 UniXNU
           # claude 11-28: hardware watchdog armed before the modem probe (bbsel boot 1 hung there with no watchdog yet)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-hwdt-early.py" device device-ios17 UniXNU
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/zz-btd-launch-constraint.patch" UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
