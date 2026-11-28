@@ -274,7 +274,7 @@ void governorThread(void *, wait_result_t) {
                 ready[d] = true;
             }
             unsigned want = l.count - 1;
-            if (busy[d] < 900) {
+            if (busy[d] < 650) {  // gemini bb14: faster hispeed jump (65% vs 90%)
                 const uint64_t need = l.khz[cur[d]] * busy[d] * 125 / 100000;
                 want = 0;
                 while (want + 1 < l.count && l.khz[want] < need) ++want;
@@ -290,10 +290,10 @@ void governorThread(void *, wait_result_t) {
             }
             if (framing)
                 while (want + 1 < l.count && (uint64_t)l.khz[want] * 100 < (uint64_t)l.khz[l.count - 1] * gFramePct) ++want;
+            if (boost) want = l.count - 1;  // gemini bb14: boost d0 (E-cores running backboardd) too, not only d1/d2
             if (d > 0) {
                 quiet[d] = busy[d] < 100 ? quiet[d] + 1 : 0;
-                if (boost) want = l.count - 1;
-                else if (quiet[d] < 12)
+                if (!boost && quiet[d] < 12)
                     while (want + 1 < l.count && l.khz[want] * 2 < l.khz[l.count - 1]) ++want;
             }
             if (want > cur[d]) {
@@ -352,7 +352,7 @@ extern "C" void sheng_cpufreq_poll(void) {
 }
 
 extern "C" void sheng_cpufreq_probe(void) {
-    unsigned mode = 0, capMHz = 0, minMHz = 0, boostMs = 1000, frameMs = 300, framePct = 60;
+    unsigned mode = 0, capMHz = 0, minMHz = 0, boostMs = 1000, frameMs = 400, framePct = 100;  // gemini bb14: 100% during active frames, 307/499/595 MHz when idle
     PE_parse_boot_argn("sheng-cpufreq", &mode, sizeof(mode));
     PE_parse_boot_argn("sheng-cpufreq-cap", &capMHz, sizeof(capMHz));
     PE_parse_boot_argn("sheng-cpufreq-min", &minMHz, sizeof(minMHz));
