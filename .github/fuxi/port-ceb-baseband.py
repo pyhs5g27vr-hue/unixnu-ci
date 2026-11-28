@@ -51,9 +51,13 @@ md5 = lambda b: hashlib.md5(b).hexdigest()
 roots = [Path(a) for a in sys.argv[1:]] or [p for p in (Path('device'), Path('device-ios17'), Path('UniXNU'), Path('kerfand')) if p.is_dir()]
 pkgs = sorted({p.parent for r in roots for p in r.rglob('AdspProbe.cpp') if '.git' not in p.parts})
 assert pkgs, 'no package dir with AdspProbe.cpp'
+# Claude 2026-11-28: files taken from Kerfand's newer snapshot 2a1c720 (2026-11-28) instead of ceb99ca, verbatim:
+# coachz_baseband.cpp = D9 ApplePPM stand-in (CPMS: CommCenter's "ABM ASSERT (fCPMSAgent)", seen on all3bb2/3) + D24/D25/D27 SIM.
+K28 = '2a1c720'
+NEWER = {'coachz_baseband.cpp': K28}
 for d in pkgs:
     for n in NEW:
-        (d / n).write_bytes(fetch(CEB, 'package/' + n))
+        (d / n).write_bytes(fetch(NEWER.get(n, CEB), 'package/' + n))
     for n in SHARED:
         cur = (d / n).read_bytes()
         new = fetch(CEB, 'package/' + n)
