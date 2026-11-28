@@ -78,12 +78,19 @@ static int32_t fuxi_gh_call(uint32_t fn, uint64_t a1, uint64_t a2) {
   return (int32_t)(uint32_t)x0;
 }
 
+// Claude+Gemini 11-28: a panic on one CPU leaves the others running, so this thread kept pinging and the watchdog never bit.
+extern boolean_t panic_active(void) __attribute__((weak_import));
+extern boolean_t debug_mode_active(void) __attribute__((weak_import));
 static void fuxi_hwdt_thread(void *arg, wait_result_t wr) {
   (void)arg; (void)wr;
   for (unsigned n = 0;; ++n) {
     if (fuxi_hwdt_test && n >= fuxi_hwdt_test) {
       printf("fuxi hwdt: test, pings stopped after %u s\n", n);
       fuxi_hwdt_state[0] = 0x7e57;
+      return;
+    }
+    if ((&panic_active && panic_active()) || (&debug_mode_active && debug_mode_active())) {
+      fuxi_hwdt_state[0] = 0xdead;   // stop pinging: Gunyah bites after fuxi-hwdt seconds -> fastboot
       return;
     }
     (void)fuxi_gh_call(FuxiGhPing, 0, 0);
