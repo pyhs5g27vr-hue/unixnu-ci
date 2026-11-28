@@ -215,6 +215,10 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-ppm-bb-only.py" device device-ios17 UniXNU
           # Gemini 11-28: post-SAHARA NAS 0x33 (roaming any) + DMS ONLINE (+12 s after low-power handshake)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-bb-post-online.py" device device-ios17 UniXNU
+          # Gemini 11-28 (bb9): quiet 1 Hz baseband UART spam + read SMEM crash reason on fatal=1
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-modem-quiet.py" device device-ios17 UniXNU
+          # Gemini 11-28 (bb9): default CPU turbo=1 (A715 2803 / X3 3187 MHz, 0 boot-args bytes)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-cpufreq-turbo-default.py" device device-ios17 UniXNU
           # claude 11-28: hardware watchdog armed before the modem probe (bbsel boot 1 hung there with no watchdog yet)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-hwdt-early.py" device device-ios17 UniXNU
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/zz-btd-launch-constraint.patch" UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
@@ -225,6 +229,8 @@ jobs:
           for x in zz-vmm-hide; do cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-2a1c720/$x.patch" UniXNU/patches/xnu-10063-arm64e/$x.patch; done
           # Gemini 11-28: 3-stage single-copy Mav16 baseband firmware union-mount (Kerfand 2a1c720 zz-xpc-manifest-mount firmware parts)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-patch-bb-fw-mount.py" UniXNU/patches/xnu-10063-arm64e/ios17-zaudio-hal-mount.patch
+          # Gemini 11-28 (bb9): Kerfand 2a1c720 Safari WebContent Mach message filter fix
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zzz-webkit-msgfilter.patch" UniXNU/patches/xnu-10063-arm64e/zzz-webkit-msgfilter.patch
           # 2c) fuxi-oslog=<process>: Kerfand oslog mirror for any process (default bluetoothd), in-line edits only
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/oslog-any.py" UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
           grep -c fuxi-oslog UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch

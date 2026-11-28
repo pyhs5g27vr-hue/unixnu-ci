@@ -29,9 +29,9 @@ static void bb_post_online_arm(void)
     printf("COACHZ post-online: off (fuxi-bb-post-online=0)\n");
     return;
   }
-  bb_post_online_at = bb_now_ms() + 12000u;
+  bb_post_online_at = bb_now_ms() + 20000u;
   bb_post_online_state = 1u;
-  printf("COACHZ post-online: armed for +12 s (at %u ms)\n", bb_post_online_at);
+  printf("COACHZ post-online: armed for +20 s (at %u ms)\n", bb_post_online_at);
 }
 static void bb_post_online_step(void)
 {
