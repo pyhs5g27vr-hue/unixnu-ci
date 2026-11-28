@@ -222,7 +222,7 @@ jobs:
           # Claude 11-28: Kerfand 2a1c720 verbatim: vmm-hide on with fuxi-modem (AMP patches dropped: no frames / hard hang here)
           for x in zz-vmm-hide; do cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-2a1c720/$x.patch" UniXNU/patches/xnu-10063-arm64e/$x.patch; done
           # Gemini 11-28: 3-stage single-copy Mav16 baseband firmware union-mount (Kerfand 2a1c720 zz-xpc-manifest-mount firmware parts)
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zzz-fuxi-bb-fw-mount.patch" UniXNU/patches/xnu-10063-arm64e/zzz-fuxi-bb-fw-mount.patch
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-patch-bb-fw-mount.py" UniXNU/patches/xnu-10063-arm64e/ios17-zaudio-hal-mount.patch
           # 2c) fuxi-oslog=<process>: Kerfand oslog mirror for any process (default bluetoothd), in-line edits only
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/oslog-any.py" UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
           grep -c fuxi-oslog UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
