@@ -1,13 +1,8 @@
-fuxi baseband firmware mounts (Kerfand 2a1c720 zz-xpc-manifest-mount.patch, firmware/preboot parts only; skips /System/Library/xpc):
-  1. /private/var/ngpu/owner-apps/firmware -> /usr/standalone/firmware (BootControllerLegacy::prepare Info.plist)
-  2. /private/var/ngpu/p -> /private/preboot (placeholder dir for personalizedFirmwarePath)
-  3. /private/var/ngpu/owner-apps/firmware/Baseband/Mav16 -> /private/preboot/<hash>/usr/local/standalone/firmware/Baseband/Mav16
-     (single-copy bind-over-placeholder; avoids doubling gpuaddon size).
-
 diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index a69e4af..4adff8d 100644
 --- a/bsd/kern/kern_exec.c
 +++ b/bsd/kern/kern_exec.c
-@@ -7556,6 +7556,28 @@
+@@ -7558,6 +7558,26 @@
  	native_gpu_addon_mount(p, scratch, 0xc00, btd_source, sizeof(btd_source), btd_point, sizeof(btd_point),
  	    "/usr/sbin/BlueTool", "/usr/sbin/bluetoothd", &btd_stage, &btd_status);
  	printf("fuxi btd mount: stage %d status %d\n", btd_stage, btd_status);
