@@ -32,7 +32,7 @@ diff --git a/osfmk/ipc/ipc_policy.c b/osfmk/ipc/ipc_policy.c
 +	 * refusal is logged (process, message id, service); a WebKit process's message is let through instead of killing it.
 +	 */
 +	{
-+		static uint32_t fuxi_filtered;
++		static uint32_t fuxi_filtered; extern int proc_pid(struct proc *p);   /* fuxi: RELEASE config has no declaration */
 +		const char *fuxi_name = proc_name_address(current_proc());
 +		const bool fuxi_webkit = fuxi_name && !strncmp(fuxi_name, "com.apple.WebKi", 15);
 +		if (os_atomic_inc_orig(&fuxi_filtered, relaxed) < 200) {
