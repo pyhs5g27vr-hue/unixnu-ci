@@ -206,7 +206,8 @@ jobs:
 
           # 2b) Kerfand ceb99ca (layout-2026-11-26) Bluetooth, verbatim: FuxiBluetooth.cpp VSC fix + launch constraint for BlueTool/fuxi-logdump
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/FuxiBluetooth.cpp" device/package/FuxiBluetooth.cpp
-          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/CpuFreqProbe.cpp" device/package/CpuFreqProbe.cpp
+          # Gemini 11-28 (bb11): restore mode-4 dynamic governor CpuFreqProbe.cpp (sheng-cpufreq=4 scales down when idle)
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/CpuFreqProbe.cpp" device/package/CpuFreqProbe.cpp
           # 2b2) Kerfand ceb99ca baseband (FuxiModem*, modem GLINK/QRTR, IPA, COACHZ bridge), verbatim; fuxi-modem=15 coachz-baseband=1
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/port-ceb-baseband.py"
           # Claude+Gemini 11-28: no IOMallocZero in the IPCC interrupt (gOwner lazy alloc -> zalloc panic without fuxi-modem)
@@ -217,8 +218,6 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-bb-post-online.py" device device-ios17 UniXNU
           # Gemini 11-28 (bb9): quiet 1 Hz baseband UART spam + read SMEM crash reason on fatal=1
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-modem-quiet.py" device device-ios17 UniXNU
-          # Gemini 11-28 (bb9): default CPU turbo=1 (A715 2803 / X3 3187 MHz, 0 boot-args bytes)
-          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-cpufreq-turbo-default.py" device device-ios17 UniXNU
           # Gemini 11-28 (bb10): FTM5 touch keepalive (20 s idle -> fts_start_sensing) + battery 10 s refresh
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-touch-keepalive.py" device device-ios17 UniXNU
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-battery-10s.py" device device-ios17 UniXNU
@@ -234,6 +233,8 @@ jobs:
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-patch-bb-fw-mount.py" UniXNU/patches/xnu-10063-arm64e/ios17-zaudio-hal-mount.patch
           # Gemini 11-28 (bb9): Kerfand 2a1c720 Safari WebContent Mach message filter fix
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/zzz-webkit-msgfilter.patch" UniXNU/patches/xnu-10063-arm64e/zzz-webkit-msgfilter.patch
+          # Gemini 11-28 (bb11): 18-line read-only recount_processor_usage() getter required by sheng-cpufreq=4
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/sheng-cpu-idle.patch" UniXNU/patches/xnu-10063-arm64e/zzz-sheng-cpu-idle.patch
           # 2c) fuxi-oslog=<process>: Kerfand oslog mirror for any process (default bluetoothd), in-line edits only
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/oslog-any.py" UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
           grep -c fuxi-oslog UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
