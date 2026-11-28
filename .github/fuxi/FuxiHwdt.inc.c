@@ -1,26 +1,28 @@
-// fuxi hardware watchdog (2026-11-16): a kernel-level hard hang (GPU freeze, USB gone, every thread stopped) must still end in
+// fuxi hardware watchdog (2026-11-16): a kernel-level hard hang (GPU freeze, USB gone, interrupts stuck) must still end in
 // fastboot. fuxi-hwdt=<seconds> (5..32) first sets the PMIC SDAM reboot reason to "bootloader" (BootResetCore.h), then arms the
-// Gunyah hypervisor watchdog with bark = bite = <seconds>; a kernel thread pings it every second. fuxi-hwdt-test=<seconds> stops the
-// pings after that long, to prove the bite path. Without fuxi-hwdt nothing is touched.
+// Gunyah hypervisor watchdog with bark = bite = <seconds>; a hard timer_call ISR pings it every second so heavy thread load
+// during boot can never starve the feeder into a false bite. fuxi-hwdt-test=<seconds> stops re-arming after that long, to prove
+// the bite path. Without fuxi-hwdt nothing is touched.
 // The APSS WDT registers at 0x17c10000 belong to Gunyah: the first EL1 write gave a synchronous external abort (run 43778207871,
 // far = map + 8). The hypervisor's own watchdog service is used instead, as the Linux gunyah_wdt driver (v8, 2025-11) does it:
 // SMCCC fast calls, SMC32, owner vendor hyp: CONTROL 0x86000005 (arg 3 enable, 2 disable), STATUS 0x86000006, PING 0x86000007,
 // SET_TIME 0x86000008 (bark ms, bite ms), max 32 s; a0 = 0 ok, -1 not supported.
-// Included at the end of BootWatchdogPolicy.c; fuxi_hwdt_start() runs once from sheng_boot_watchdog_policy (thread context).
+// Included at the end of BootWatchdogPolicy.c; fuxi_hwdt_start() runs once (from Ios17LegacyDisplayProbe or sheng_boot_watchdog_policy).
 #include <kern/thread.h>
 #include <kern/clock.h>
+#include <kern/timer_call.h>
+#include <kern/debug.h>
 #include <machine/machine_routines.h>
 #include "BootResetCore.h"
 // The exported machine_routines.h this file is built against has no ml_io_map (run 43774594661: implicit declaration).
 extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
-extern kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void *parameter, integer_t priority,
-                                                  thread_t *new_thread);
 enum {FuxiGhControl = 0x86000005, FuxiGhStatus = 0x86000006, FuxiGhPing = 0x86000007, FuxiGhSetTime = 0x86000008,
       FuxiGhEnable = 3, FuxiGhDisable = 2};
 static unsigned fuxi_hwdt_test;
+static unsigned fuxi_hwdt_ticks;
+static timer_call_data_t fuxi_hwdt_timer;
 volatile uint32_t fuxi_hwdt_state[4];   // [0] stage/error, [1] pings, [2] SDAM before, [3] SDAM after
 static unsigned fuxi_hwdt_bark;
-#include <kern/debug.h>
 extern int armcpu_spi_attach(uint32_t, _Bool, void (*)(void *), void *, uint32_t *, uint64_t *) __attribute__((weak_import));
 // Bark (claude + Gemini 11-27): XNU prints only the panic title here, so print the state first.
 extern volatile uint32_t armcpu_core_timer[8] __attribute__((weak_import));
@@ -78,25 +80,25 @@ static int32_t fuxi_gh_call(uint32_t fn, uint64_t a1, uint64_t a2) {
   return (int32_t)(uint32_t)x0;
 }
 
-// Claude+Gemini 11-28: a panic on one CPU leaves the others running, so this thread kept pinging and the watchdog never bit.
-// panic_active() comes from kern/debug.h (unsigned panic_active(void)).
+// Claude+Gemini 11-28: timer_call runs in the hardware timer ISR, so heavy boot/scheduler load cannot starve pings into a
+// false bite (qos1b, all3bb3 boot 1). Stops re-arming on panic_active()/debug_mode_active() or fuxi-hwdt-test so Gunyah bites.
 extern boolean_t debug_mode_active(void) __attribute__((weak_import));
-static void fuxi_hwdt_thread(void *arg, wait_result_t wr) {
-  (void)arg; (void)wr;
-  for (unsigned n = 0;; ++n) {
-    if (fuxi_hwdt_test && n >= fuxi_hwdt_test) {
-      printf("fuxi hwdt: test, pings stopped after %u s\n", n);
-      fuxi_hwdt_state[0] = 0x7e57;
-      return;
-    }
-    if (panic_active() || (&debug_mode_active && debug_mode_active())) {
-      fuxi_hwdt_state[0] = 0xdead;   // stop pinging: Gunyah bites after fuxi-hwdt seconds -> fastboot
-      return;
-    }
-    (void)fuxi_gh_call(FuxiGhPing, 0, 0);
-    fuxi_hwdt_state[1] = fuxi_hwdt_state[1] + 1;
-    delay_for_interval(1000, 1000 * 1000);   // 1000 x 1 ms
+static void fuxi_hwdt_tick(timer_call_param_t p0, timer_call_param_t p1) {
+  (void)p0; (void)p1;
+  if (fuxi_hwdt_test && fuxi_hwdt_ticks >= fuxi_hwdt_test) {
+    fuxi_hwdt_state[0] = 0x7e57;
+    return;
   }
+  if (panic_active() || (&debug_mode_active && debug_mode_active())) {
+    fuxi_hwdt_state[0] = 0xdead;   // stop pinging: Gunyah bites after fuxi-hwdt seconds -> fastboot
+    return;
+  }
+  (void)fuxi_gh_call(FuxiGhPing, 0, 0);
+  fuxi_hwdt_ticks++;
+  fuxi_hwdt_state[1] = fuxi_hwdt_state[1] + 1;
+  uint64_t deadline = 0;
+  clock_interval_to_deadline(1000, 1000 * 1000, &deadline);
+  (void)timer_call_enter(&fuxi_hwdt_timer, deadline, TIMER_CALL_SYS_CRITICAL);
 }
 
 static void fuxi_hwdt_start(void) {
@@ -150,19 +152,18 @@ static void fuxi_hwdt_start(void) {
     printf("fuxi hwdt: SET_TIME %d (disable %d), not armed\n", r2, r1);
     return;
   }
-  thread_t thread;
-  // Highest kernel priority (MAXPRI_KERNEL 95), as upstream: a busy system must not starve the pings into a false bite.
-  if (kernel_thread_start_priority(fuxi_hwdt_thread, NULL, 95, &thread) != KERN_SUCCESS) {
-    fuxi_hwdt_state[0] = 0xe5;
-    printf("fuxi hwdt: no ping thread, watchdog left off\n");
-    return;
-  }
-  thread_deallocate(thread);
+  timer_call_setup(&fuxi_hwdt_timer, fuxi_hwdt_tick, NULL);
   int32_t r3 = fuxi_gh_call(FuxiGhControl, FuxiGhEnable, 0);
   (void)fuxi_gh_call(FuxiGhPing, 0, 0);
+  fuxi_hwdt_ticks = 0;
   fuxi_hwdt_state[0] = r3 == 0 ? 1 : 0xe6;
-  printf("fuxi hwdt: Gunyah watchdog %s (enable %d), bite after %u s without pings (test %u)\n", r3 == 0 ? "armed" : "NOT armed", r3,
-         secs, fuxi_hwdt_test);
+  if (r3 == 0) {
+    uint64_t deadline = 0;
+    clock_interval_to_deadline(1000, 1000 * 1000, &deadline);
+    (void)timer_call_enter(&fuxi_hwdt_timer, deadline, TIMER_CALL_SYS_CRITICAL);
+  }
+  printf("fuxi hwdt: Gunyah watchdog %s (enable %d, timer_call), bite after %u s without pings (test %u)\n",
+         r3 == 0 ? "armed" : "NOT armed", r3, secs, fuxi_hwdt_test);
 }
 // claude 11-28: called from Ios17LegacyDisplayProbe.cpp before the modem probe (fuxi-hwdt-early.py); fuxi_hwdt_start is once-only.
 void fuxi_hwdt_start_early(void);

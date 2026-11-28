@@ -301,6 +301,8 @@ jobs:
           done
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" gpupower \
             $(find device device-ios17 UniXNU -name GpuPowerProbe.cpp -type f 2>/dev/null)
+          # Claude+Gemini 11-28: Kerfand 2a1c720 coherence probe retry x3 (AMP Edge scheduler)
+          python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/fuxi-gpu-coherence-retry.py" device device-ios17 UniXNU
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/mu2-diag.py" publish \
             $(find UniXNU -path '*drivers/Adreno740/NativeAdrenoPublish.cpp' -type f 2>/dev/null)
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/patch-v4-splash-panelhz.py" fwslot \
