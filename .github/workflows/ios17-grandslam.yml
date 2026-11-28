@@ -212,6 +212,8 @@ jobs:
           cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/zz-btd-launch-constraint.patch" UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
           grep -c gVscFixed device/package/FuxiBluetooth.cpp
           grep -c fuxi-logdump UniXNU/patches/xnu-10063-arm64e/zz-btd-launch-constraint.patch
+          # Kerfand ceb99ca zz-vmm-hide.patch verbatim: fuxi-vmm-hide=1 -> user processes read kern.hv_vmm_present 0 (HasBaseband) (claude 11-28)
+          cp "$GITHUB_WORKSPACE/ci-self/.github/fuxi/k-ceb99ca/zz-vmm-hide.patch" UniXNU/patches/xnu-10063-arm64e/zz-vmm-hide.patch
           # 2c) fuxi-oslog=<process>: Kerfand oslog mirror for any process (default bluetoothd), in-line edits only
           python3 "$GITHUB_WORKSPACE/ci-self/.github/fuxi/oslog-any.py" UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
           grep -c fuxi-oslog UniXNU/patches/xnu-10063-arm64e/zz-btd-oslog-probe.patch
